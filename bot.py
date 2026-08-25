@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import telebot
@@ -422,8 +423,31 @@ if __name__ == "__main__":
     print("🚀 Starting Telegram polling...")
 
 
-    bot.infinity_polling(
-        skip_pending=True,
-        timeout=60,
-        long_polling_timeout=60
-        )
+    # إعادة المحاولة تلقائيًا عند حدوث 409 بدل توقف البوت.
+    # 409 يعني أن Telegram يرى getUpdates آخر لنفس التوكن.
+    while True:
+        try:
+            bot.infinity_polling(
+                skip_pending=True,
+                timeout=60,
+                long_polling_timeout=60
+            )
+        except telebot.apihelper.ApiTelegramException as e:
+            error_text = str(e)
+
+            if "409" in error_text or "Conflict" in error_text:
+                print("⚠️ Telegram 409 Conflict — إعادة المحاولة بعد 10 ثوانٍ...")
+                time.sleep(10)
+                continue
+
+            if "401" in error_text or "Unauthorized" in error_text:
+                print("❌ Telegram 401 Unauthorized — تحقق من BOT_TOKEN في Render.")
+                time.sleep(30)
+                continue
+
+            print(f"❌ Telegram API error: {e}")
+            time.sleep(10)
+
+        except Exception as e:
+            print(f"❌ Polling error: {e}")
+            time.sleep(10)
