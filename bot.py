@@ -1,6 +1,9 @@
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 import telebot
-from telebot import types
+
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -10,94 +13,62 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN)
 
 
+# صفحة بسيطة حتى Render يعتبر الخدمة شغالة
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+    def log_message(self, format, *args):
+        pass
+
+
+def run_web_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+
+    print(f"🌐 Web server running on port {port}")
+
+    server.serve_forever()
+
+
+# تشغيل Web Server في Thread منفصل
+threading.Thread(
+    target=run_web_server,
+    daemon=True
+).start()
+
+
+# أمر /start
 @bot.message_handler(commands=["start"])
 def start(message):
-    markup = types.InlineKeyboardMarkup()
-
-    markup.add(
-        types.InlineKeyboardButton(
-            "🖥️ السيرفرات",
-            callback_data="servers"
-        )
-    )
-
-    markup.add(
-        types.InlineKeyboardButton(
-            "ℹ️ المساعدة",
-            callback_data="help"
-        )
-    )
 
     bot.send_message(
         message.chat.id,
-        "👋 أهلاً بك في بوت إدارة السيرفرات!\n\n"
-        "اختر من القائمة:",
-        reply_markup=markup
+        "🤖 البوت يعمل بنجاح!\n\n"
+        "أهلاً بك 👋"
     )
 
 
+# أمر /help
 @bot.message_handler(commands=["help"])
 def help_command(message):
+
     bot.send_message(
         message.chat.id,
         "📚 الأوامر:\n\n"
-        "/start - القائمة الرئيسية\n"
-        "/server - إدارة السيرفر\n"
+        "/start - تشغيل البوت\n"
         "/help - المساعدة"
     )
 
 
-@bot.message_handler(commands=["server"])
-def server_command(message):
-    bot.send_message(
-        message.chat.id,
-        "🖥️ إدارة السيرفرات\n\n"
-        "لا توجد سيرفرات مضافة حاليًا."
-    )
-
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-
-    if call.data == "servers":
-        bot.answer_callback_query(call.id)
-
-        bot.edit_message_text(
-            "🖥️ إدارة السيرفرات\n\n"
-            "لا توجد سيرفرات مضافة حاليًا.",
-            call.message.chat.id,
-            call.message.message_id
-        )
-
-    elif call.data == "help":
-        bot.answer_callback_query(call.id)
-
-        bot.edit_message_text(
-            "ℹ️ المساعدة\n\n"
-            "/start - القائمة الرئيسية\n"
-            "/server - إدارة السيرفر\n"
-            "/help - المساعدة",
-            call.message.chat.id,
-            call.message.message_id
-        )
-
-
-@bot.message_handler(func=lambda message: True)
-def other_messages(message):
-
-    if message.text.startswith("/"):
-        return
-
-    bot.reply_to(
-        message,
-        "🤖 استلمت رسالتك!"
-    )
-
-
-print("🤖 Bot is starting...")
+print("🤖 Telegram Bot Started")
 
 bot.infinity_polling(
     skip_pending=True,
     timeout=60,
     long_polling_timeout=60
-        )
+)
