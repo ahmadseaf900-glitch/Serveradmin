@@ -1,25 +1,15 @@
 FROM python:3.13-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
-
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       gcc \
-       libxml2-dev \
-       libxslt1-dev \
-    && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py .
-COPY aternos.py .
+COPY . .
 
 EXPOSE 10000
 
