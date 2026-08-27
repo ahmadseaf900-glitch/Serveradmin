@@ -14,8 +14,12 @@ from telebot import types
 
 try:
     from python_aternos import Client as AternosClient
-except ImportError:
+    ATERNOS_AVAILABLE = True
+except ImportError as e:
     AternosClient = None
+    ATERNOS_AVAILABLE = False
+    print(f"⚠️ python-aternos import failed: {e}", flush=True)
+
 
 # =========================================================
 # Environment Variables
@@ -32,37 +36,97 @@ ATERNOS_SERVER = os.getenv(
     "MACESMP37.aternos.me"
 ).strip()
 
+
+# =========================================================
+# Required Variables
+# =========================================================
+
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN غير موجود في Render")
+    raise RuntimeError("❌ BOT_TOKEN غير موجود في Render.")
 
 if not DISCORD_TOKEN:
-    raise RuntimeError("DISCORD_TOKEN غير موجود في Render")
+    raise RuntimeError("❌ DISCORD_TOKEN غير موجود في Render.")
 
 if not DISCORD_CHANNEL_ID:
-    raise RuntimeError("DISCORD_CHANNEL_ID غير موجود في Render")
+    raise RuntimeError("❌ DISCORD_CHANNEL_ID غير موجود في Render.")
+
+
+# =========================================================
+# Telegram Bot
+# =========================================================
 
 bot = telebot.TeleBot(
     BOT_TOKEN,
     parse_mode="HTML"
 )
 
+
 # =========================================================
-# Discord
+# لا يوجد نظام حماية
+# أي شخص يستطيع استخدام البوت
 # =========================================================
 
-DISCORD_URL = (
-    f"https://discord.com/api/v10/channels/"
-    f"{DISCORD_CHANNEL_ID}/messages"
-)
+def is_admin(message):
+    return True
 
-DISCORD_HEADERS = {
-    "Authorization": f"Bot {DISCORD_TOKEN}",
-    "Content-Type": "application/json",
+
+def is_callback_admin(call):
+    return True
+
+
+def admin_only(message):
+    return True
+
+
+def callback_admin_only(call):
+    return True
+
+
+# =========================================================
+# Console Commands
+# =========================================================
+
+CONSOLE_WHITELIST = {
+    x.strip().lower().lstrip("/")
+    for x in os.getenv(
+        "CONSOLE_WHITELIST",
+        "say,whitelist,list,online,save-all"
+    ).split(",")
+    if x.strip()
 }
 
-# =========================================================
-# Minecraft Commands
-# =========================================================
+
+ADMIN_COMMANDS = {
+    "list",
+    "online",
+    "say",
+    "whitelist",
+    "op",
+    "deop",
+    "kick",
+    "ban",
+    "pardon",
+    "tp",
+    "gamemode",
+    "give",
+    "effect",
+    "time",
+    "weather",
+    "difficulty",
+    "gamerule",
+    "save-all",
+    "save-on",
+    "save-off",
+    "stop",
+    "reload",
+    "plugins",
+    "version",
+    "seed",
+    "locate",
+    "teleport",
+    "kill",
+}
+
 
 DIRECT_COMMANDS = {
     "op",
@@ -94,25 +158,30 @@ DIRECT_COMMANDS = {
     "whitelist",
 }
 
-CONSOLE_WHITELIST = {
-    x.strip().lower().lstrip("/")
-    for x in os.getenv(
-        "CONSOLE_WHITELIST",
-        "say,whitelist,list,online,save-all"
-    ).split(",")
-    if x.strip()
-}
 
 # =========================================================
-# Discord إرسال
+# Discord
 # =========================================================
+
+DISCORD_URL = (
+    f"https://discord.com/api/v10/channels/"
+    f"{DISCORD_CHANNEL_ID}/messages"
+)
+
+DISCORD_HEADERS = {
+    "Authorization": f"Bot {DISCORD_TOKEN}",
+    "Content-Type": "application/json",
+}
+
 
 def send_to_discord(content):
     try:
         response = requests.post(
             DISCORD_URL,
             headers=DISCORD_HEADERS,
-            json={"content": content},
+            json={
+                "content": content
+            },
             timeout=15,
         )
 
@@ -129,8 +198,7 @@ def send_to_discord(content):
 
     except requests.RequestException as exc:
         print(
-            "Discord connection error:",
-            exc,
+            f"Discord connection error: {exc}",
             flush=True
         )
         return False, str(exc)
@@ -145,6 +213,22 @@ def send_console(command):
     return send_to_discord(command)
 
 
+def command_allowed(command):
+    command = command.strip().lstrip("/").lower()
+
+    parts = command.split()
+
+    if not parts:
+        return False
+
+    first = parts[0]
+
+    return (
+        first in CONSOLE_WHITELIST
+        or first in ADMIN_COMMANDS
+    )
+
+
 # =========================================================
 # Aternos
 # =========================================================
@@ -152,6 +236,7 @@ def send_console(command):
 _aternos_client = None
 _aternos_account = None
 _aternos_server = None
+
 _aternos_lock = threading.Lock()
 
 
@@ -161,16 +246,22 @@ def get_aternos_server():
     global _aternos_account
     global _aternos_server
 
-    if AternosClient is None:
-        return None, (
-            "python-aternos غير مثبت. "
-            "تحقق من requirements.txt."
+    if not ATERNOS_AVAILABLE:
+        return (
+            None,
+            "❌ مكتبة python-aternos غير متاحة داخل البيئة."
         )
 
-    if not ATERNOS_USERNAME or not ATERNOS_PASSWORD:
-        return None, (
-            "ضع ATERNOS_USERNAME و "
-            "ATERNOS_PASSWORD في Render."
+    if not ATERNOS_USERNAME:
+        return (
+            None,
+            "❌ ATERNOS_USERNAME غير موجود في Render."
+        )
+
+    if not ATERNOS_PASSWORD:
+        return (
+            None,
+            "❌ ATERNOS_PASSWORD غير موجود في Render."
         )
 
     with _aternos_lock:
@@ -179,6 +270,11 @@ def get_aternos_server():
 
             if _aternos_server is not None:
                 return _aternos_server, None
+
+            print(
+                "🔐 تسجيل الدخول إلى Aternos...",
+                flush=True
+            )
 
             client = AternosClient()
 
@@ -222,30 +318,27 @@ def get_aternos_server():
                     _aternos_server = server
 
                     print(
-                        f"✅ Aternos server found: "
-                        f"{address}",
+                        f"✅ تم العثور على السيرفر: {address}",
                         flush=True
                     )
 
                     return server, None
 
-            return None, (
-                f"لم أجد السيرفر "
-                f"{ATERNOS_SERVER} "
-                f"في حساب Aternos."
+            return (
+                None,
+                f"❌ لم أجد السيرفر: {ATERNOS_SERVER}"
             )
 
         except Exception as exc:
 
+            print(
+                f"❌ Aternos login error: {exc}",
+                flush=True
+            )
+
             _aternos_client = None
             _aternos_account = None
             _aternos_server = None
-
-            print(
-                "Aternos error:",
-                exc,
-                flush=True
-            )
 
             return None, str(exc)
 
@@ -264,12 +357,15 @@ def aternos_action(action):
     try:
 
         if action == "start":
+
             result = server.start()
 
         elif action == "stop":
+
             result = server.stop()
 
         elif action == "restart":
+
             result = server.restart()
 
         elif action == "status":
@@ -284,15 +380,22 @@ def aternos_action(action):
                 result = result()
 
         else:
-            return False, "عملية Aternos غير معروفة."
 
-        return True, (
+            return False, "❌ عملية غير معروفة."
+
+        return (
+            True,
             str(result)
             if result is not None
             else "OK"
         )
 
     except Exception as exc:
+
+        print(
+            f"❌ Aternos action error: {exc}",
+            flush=True
+        )
 
         _aternos_client = None
         _aternos_account = None
@@ -302,7 +405,7 @@ def aternos_action(action):
 
 
 # =========================================================
-# Web Server - Render
+# Render Web Server
 # =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -319,10 +422,14 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         self.wfile.write(
-            b"Telegram Minecraft Bot is running!"
+            b"Telegram Bot is running!"
         )
 
-    def log_message(self, format, *args):
+    def log_message(
+        self,
+        format,
+        *args
+    ):
         return
 
 
@@ -365,10 +472,12 @@ def main_menu():
     )
 
     markup.add(
+
         types.InlineKeyboardButton(
             "🟢 حالة السيرفر",
             callback_data="status"
         ),
+
         types.InlineKeyboardButton(
             "▶️ تشغيل Aternos",
             callback_data="aternos_start"
@@ -376,10 +485,12 @@ def main_menu():
     )
 
     markup.add(
+
         types.InlineKeyboardButton(
             "⏹ إيقاف السيرفر",
             callback_data="server_stop"
         ),
+
         types.InlineKeyboardButton(
             "🔄 Restart",
             callback_data="server_restart"
@@ -387,10 +498,12 @@ def main_menu():
     )
 
     markup.add(
+
         types.InlineKeyboardButton(
             "🖥 Console",
             callback_data="console"
         ),
+
         types.InlineKeyboardButton(
             "📢 Say",
             callback_data="say"
@@ -398,6 +511,7 @@ def main_menu():
     )
 
     markup.add(
+
         types.InlineKeyboardButton(
             "🟢 Whitelist",
             callback_data="whitelist"
@@ -405,6 +519,7 @@ def main_menu():
     )
 
     markup.add(
+
         types.InlineKeyboardButton(
             "👑 Admin",
             callback_data="admin"
@@ -429,23 +544,22 @@ def start_command(message):
     )
 
     print(
-        f"[START] Telegram ID: "
-        f"{telegram_id} | "
+        f"[USER] /start | "
+        f"Telegram ID: {telegram_id} | "
         f"Username: @{username}",
         flush=True
     )
 
-    text = (
-        "🤖 <b>بوت إدارة سيرفرات ماينكرافت</b>\n\n"
-        "🟢 البوت يعمل.\n\n"
-        f"🆔 <b>Telegram ID:</b> "
-        f"<code>{telegram_id}</code>\n\n"
-        "🎮 اختر العملية:"
-    )
-
     bot.send_message(
+
         message.chat.id,
-        text,
+
+        "🤖 <b>Telegram → Discord → DiscordSRV</b>\n\n"
+        "🟢 <b>البوت يعمل.</b>\n\n"
+        f"🆔 Telegram ID: <code>{telegram_id}</code>\n"
+        f"👤 Username: <code>@{username}</code>\n\n"
+        "🎮 اختر العملية:",
+
         reply_markup=main_menu()
     )
 
@@ -469,16 +583,11 @@ def console_command(message):
 
         return
 
-    first = command.split()[0].lower()
-
-    if (
-        first not in CONSOLE_WHITELIST
-        and first not in DIRECT_COMMANDS
-    ):
+    if not command_allowed(command):
 
         bot.reply_to(
             message,
-            "⛔ هذا الأمر غير مسموح."
+            "⛔ الأمر غير موجود في Console Whitelist."
         )
 
         return
@@ -497,8 +606,7 @@ def console_command(message):
 
         bot.reply_to(
             message,
-            f"❌ فشل:\n"
-            f"<code>{detail}</code>"
+            f"❌ فشل:\n<code>{detail}</code>"
         )
 
 
@@ -536,8 +644,7 @@ def say_command(message):
 
         bot.reply_to(
             message,
-            f"❌ فشل:\n"
-            f"<code>{detail}</code>"
+            f"❌ فشل:\n<code>{detail}</code>"
         )
 
 
@@ -555,7 +662,11 @@ def whitelist_command(message):
         .split()
     )
 
-    if not args:
+    if (
+        len(args) < 1
+        or args[0].lower()
+        not in {"add", "remove", "list"}
+    ):
 
         bot.reply_to(
             message,
@@ -573,8 +684,7 @@ def whitelist_command(message):
         command = "whitelist list"
 
     elif (
-        action in {"add", "remove"}
-        and len(args) == 2
+        len(args) == 2
         and re.fullmatch(
             r"[A-Za-z0-9_]{1,16}",
             args[1]
@@ -582,16 +692,14 @@ def whitelist_command(message):
     ):
 
         command = (
-            f"whitelist "
-            f"{action} "
-            f"{args[1]}"
+            f"whitelist {action} {args[1]}"
         )
 
     else:
 
         bot.reply_to(
             message,
-            "❌ الأمر غير صحيح."
+            "❌ اسم اللاعب غير صالح أو ناقص."
         )
 
         return
@@ -602,15 +710,14 @@ def whitelist_command(message):
 
         bot.reply_to(
             message,
-            "✅ تم إرسال أمر Whitelist."
+            "✅ تم إرسال أمر الـWhitelist."
         )
 
     else:
 
         bot.reply_to(
             message,
-            f"❌ فشل:\n"
-            f"<code>{detail}</code>"
+            f"❌ فشل:\n<code>{detail}</code>"
         )
 
 
@@ -620,10 +727,10 @@ def whitelist_command(message):
 
 @bot.message_handler(
     func=lambda message:
-    bool(message.text)
-    and message.text.startswith("/")
+        bool(message.text)
+        and message.text.startswith("/")
 )
-def direct_command(message):
+def direct_admin_command(message):
 
     raw = message.text[1:].strip()
 
@@ -631,24 +738,15 @@ def direct_command(message):
         return
 
     command_name = (
-        raw.split()[0]
-        .lower()
+        raw.split()[0].lower()
     )
-
-    # الأوامر التي لها Handler خاص
-    if command_name in {
-        "start",
-        "console",
-        "say",
-        "whitelist"
-    }:
-        return
 
     if command_name not in DIRECT_COMMANDS:
 
         bot.reply_to(
             message,
-            "❌ الأمر غير موجود."
+            "❌ الأمر غير موجود.\n"
+            "استخدم /start."
         )
 
         return
@@ -659,7 +757,7 @@ def direct_command(message):
 
         bot.reply_to(
             message,
-            "✅ <b>تم إرسال الأمر.</b>\n\n"
+            "✅ <b>تم إرسال الأمر إلى DiscordSRV.</b>\n\n"
             f"🎮 <code>{raw}</code>"
         )
 
@@ -667,7 +765,7 @@ def direct_command(message):
 
         bot.reply_to(
             message,
-            f"❌ فشل:\n"
+            f"❌ فشل إرسال الأمر:\n"
             f"<code>{detail}</code>"
         )
 
@@ -684,29 +782,23 @@ def callback_handler(call):
     chat_id = call.message.chat.id
 
     try:
+
         bot.answer_callback_query(
             call.id
         )
+
     except Exception:
         pass
 
-    # -----------------------------------------------------
-    # Console
-    # -----------------------------------------------------
 
     if call.data == "console":
 
         bot.send_message(
             chat_id,
-            "🖥 Console\n\n"
-            "أرسل مثلاً:\n"
-            "<code>/console list</code>\n"
-            "<code>/console say Hello</code>"
+            "🖥 أرسل:\n"
+            "<code>/console list</code>"
         )
 
-    # -----------------------------------------------------
-    # Status
-    # -----------------------------------------------------
 
     elif call.data == "status":
 
@@ -726,13 +818,9 @@ def callback_handler(call):
 
             bot.send_message(
                 chat_id,
-                "❌ فشل الحصول على الحالة:\n\n"
-                f"<code>{detail}</code>"
+                f"❌ <code>{detail}</code>"
             )
 
-    # -----------------------------------------------------
-    # Say
-    # -----------------------------------------------------
 
     elif call.data == "say":
 
@@ -742,46 +830,38 @@ def callback_handler(call):
             "<code>/say رسالتك</code>"
         )
 
-    # -----------------------------------------------------
-    # Whitelist
-    # -----------------------------------------------------
 
     elif call.data == "whitelist":
 
         bot.send_message(
             chat_id,
-            "🟢 Whitelist\n\n"
-            "<code>/whitelist add Player</code>\n"
+            "🟢 <code>/whitelist add Player</code>\n"
             "<code>/whitelist remove Player</code>\n"
             "<code>/whitelist list</code>"
         )
 
-    # -----------------------------------------------------
-    # Admin
-    # -----------------------------------------------------
 
     elif call.data == "admin":
 
         bot.send_message(
+
             chat_id,
+
             "👑 <b>أوامر الإدارة</b>\n\n"
+
             "<code>/op Player</code>\n"
             "<code>/deop Player</code>\n"
-            "<code>/kick Player</code>\n"
-            "<code>/ban Player</code>\n"
+            "<code>/kick Player [سبب]</code>\n"
+            "<code>/ban Player [سبب]</code>\n"
             "<code>/pardon Player</code>\n"
             "<code>/gamemode creative Player</code>\n"
             "<code>/tp Player Player2</code>\n"
             "<code>/give Player item 1</code>\n"
             "<code>/save-all</code>\n"
             "<code>/plugins</code>\n"
-            "<code>/reload</code>\n"
-            "<code>/list</code>"
+            "<code>/reload</code>"
         )
 
-    # -----------------------------------------------------
-    # Aternos Start
-    # -----------------------------------------------------
 
     elif call.data == "aternos_start":
 
@@ -800,13 +880,10 @@ def callback_handler(call):
 
             bot.send_message(
                 chat_id,
-                "❌ فشل التشغيل:\n\n"
+                f"❌ فشل التشغيل:\n"
                 f"<code>{detail}</code>"
             )
 
-    # -----------------------------------------------------
-    # Aternos Stop
-    # -----------------------------------------------------
 
     elif call.data == "server_stop":
 
@@ -825,13 +902,10 @@ def callback_handler(call):
 
             bot.send_message(
                 chat_id,
-                "❌ فشل الإيقاف:\n\n"
+                f"❌ فشل الإيقاف:\n"
                 f"<code>{detail}</code>"
             )
 
-    # -----------------------------------------------------
-    # Aternos Restart
-    # -----------------------------------------------------
 
     elif call.data == "server_restart":
 
@@ -843,14 +917,14 @@ def callback_handler(call):
 
             bot.send_message(
                 chat_id,
-                "🔄 <b>تم إرسال طلب Restart.</b>"
+                "🔄 <b>تم إرسال طلب Restart إلى Aternos.</b>"
             )
 
         else:
 
             bot.send_message(
                 chat_id,
-                "❌ فشل Restart:\n\n"
+                f"❌ فشل Restart:\n"
                 f"<code>{detail}</code>"
             )
 
@@ -866,7 +940,7 @@ def unknown_message(message):
 
     bot.send_message(
         message.chat.id,
-        "استخدم /start لعرض القائمة.",
+        "استخدم /start أو الأوامر الموجودة في القائمة.",
         reply_markup=main_menu()
     )
 
@@ -882,6 +956,12 @@ if __name__ == "__main__":
         flush=True
     )
 
+    print(
+        f"🧪 python-aternos available: "
+        f"{ATERNOS_AVAILABLE}",
+        flush=True
+    )
+
     try:
 
         bot.remove_webhook()
@@ -891,18 +971,19 @@ if __name__ == "__main__":
             flush=True
         )
 
-    except Exception as exc:
+    except Exception as e:
 
         print(
-            "⚠️ Webhook removal:",
-            exc,
+            f"⚠️ Webhook removal: {e}",
             flush=True
         )
+
 
     print(
         "🚀 Starting Telegram polling...",
         flush=True
     )
+
 
     while True:
 
@@ -914,9 +995,9 @@ if __name__ == "__main__":
                 long_polling_timeout=60
             )
 
-        except telebot.apihelper.ApiTelegramException as exc:
+        except telebot.apihelper.ApiTelegramException as e:
 
-            error_text = str(exc)
+            error_text = str(e)
 
             if (
                 "409" in error_text
@@ -924,13 +1005,15 @@ if __name__ == "__main__":
             ):
 
                 print(
-                    "⚠️ Telegram 409 Conflict. "
-                    "يوجد Bot instance آخر بنفس التوكن.",
+                    "⚠️ Telegram 409: "
+                    "يوجد instance آخر يستخدم نفس BOT_TOKEN.",
                     flush=True
                 )
 
-                time.sleep(15)
+                time.sleep(10)
+
                 continue
+
 
             if (
                 "401" in error_text
@@ -938,27 +1021,28 @@ if __name__ == "__main__":
             ):
 
                 print(
-                    "❌ Telegram 401 Unauthorized. "
-                    "تحقق من BOT_TOKEN.",
+                    "❌ Telegram 401: "
+                    "BOT_TOKEN غير صحيح أو تم إلغاؤه.",
                     flush=True
                 )
 
                 time.sleep(30)
+
                 continue
 
+
             print(
-                "❌ Telegram API error:",
-                exc,
+                f"❌ Telegram API error: {e}",
                 flush=True
             )
 
             time.sleep(10)
 
-        except Exception as exc:
+
+        except Exception as e:
 
             print(
-                "❌ Polling error:",
-                exc,
+                f"❌ Polling error: {e}",
                 flush=True
             )
 
