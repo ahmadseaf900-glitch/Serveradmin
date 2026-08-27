@@ -34,9 +34,9 @@ if not DISCORD_CHANNEL_ID:
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-ADMIN_IDS = {
-    int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",")
-    if x.strip().isdigit()
+ADMIN_USERNAMES = {
+    x.strip().lstrip("@").lower() for x in os.getenv("ADMIN_USERNAMES", "").split(",")
+    if x.strip()
 }
 
 CONSOLE_WHITELIST = {
@@ -72,7 +72,8 @@ DISCORD_HEADERS = {
 }
 
 def is_admin(message):
-    return message.from_user.id in ADMIN_IDS
+    username = (message.from_user.username or "").strip().lstrip("@").lower()
+    return bool(username) and username in ADMIN_USERNAMES
 
 def admin_only(message):
     if not is_admin(message):
@@ -249,7 +250,7 @@ def start_command(message):
 
     telegram_id = message.from_user.id
     username = message.from_user.username or "بدون username"
-    authorized = telegram_id in ADMIN_IDS
+    authorized = is_admin(message)
 
     print(
         f"[AUTH] /start | Telegram ID: {telegram_id} | "
