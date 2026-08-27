@@ -35,7 +35,6 @@ if not DISCORD_CHANNEL_ID:
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # نظام الدخول الوحيد: رابط دعوة يحتوي على INVITE_TOKEN.
-# بعد فتح الرابط بنجاح يُحفظ Telegram ID في AUTHORIZED_USER_IDS من Render.
 INVITE_TOKEN = os.getenv("INVITE_TOKEN", "Adminsecretcodekassemandargus").strip()
 AUTHORIZED_USERS = {
     int(x.strip()) for x in os.getenv("AUTHORIZED_USER_IDS", "").split(",")
@@ -255,7 +254,19 @@ def start_command(message):
 
     telegram_id = message.from_user.id
     username = message.from_user.username or "بدون username"
+    args = message.text.split(maxsplit=1)
+    invite = args[1].strip() if len(args) > 1 else ""
     authorized = is_admin(message)
+
+    # السماح فقط لمن فتح رابط الدعوة الصحيح.
+    if invite and invite == INVITE_TOKEN:
+        AUTHORIZED_USERS.add(telegram_id)
+        authorized = True
+        print(
+            f"[AUTH] INVITE ACCEPTED | Telegram ID: {telegram_id} | "
+            f"Username: @{username}",
+            flush=True
+        )
 
     print(
         f"[AUTH] /start | Telegram ID: {telegram_id} | "
@@ -269,11 +280,14 @@ def start_command(message):
         f"🆔 <b>Telegram ID:</b> <code>{telegram_id}</code>"
     )
 
-    bot.send_message(
-        message.chat.id,
-        text,
-        reply_markup=main_menu()
-    )
+    if authorized:
+        bot.send_message(message.chat.id, text, reply_markup=main_menu())
+    else:
+        bot.send_message(
+            message.chat.id,
+            "🔒 <b>هذا البوت خاص.</b>\n\n"
+            "⛔ افتح رابط الدعوة الخاص أولًا ثم اضغط Start."
+        )
 
 @bot.message_handler(commands=["invite"])
 def invite_command(message):
