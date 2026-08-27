@@ -1,120 +1,69 @@
 import os
-import threading
+import requests
 
-from python_aternos import Client
+ATERNOS_URL = os.getenv(
+"ATERNOS_URL",
+"https://aternos.org/server/"
+)
 
+def get_status(server_address: str):
+"""
+يتحقق من حالة سيرفر Minecraft عبر عنوانه.
+لا يحتاج إلى تسجيل الدخول إلى Aternos.
+"""
+try:
+from mcstatus import JavaServer
 
-class AternosManager:
-    """
-    مدير اتصال Aternos.
-    يسجل الدخول مرة واحدة ويحاول العثور على السيرفر المطلوب.
-    """
+    server = JavaServer.lookup(server_address)
+    status = server.status()
 
-    def __init__(self):
-        self.username = os.getenv("ATERNOS_USERNAME", "").strip()
-        self.password = os.getenv("ATERNOS_PASSWORD", "").strip()
-        self.server_address = os.getenv(
-            "ATERNOS_SERVER",
-            "MACESMP37.aternos.me"
-        ).strip().lower()
+    return {
+        "online": True,
+        "players": status.players.online,
+        "max_players": status.players.max,
+        "latency": round(status.latency),
+        "motd": str(status.motd),
+    }
 
-        self.client = None
-        self.server = None
-        self.lock = threading.Lock()
+except Exception:
+    return {
+        "online": False,
+        "players": 0,
+        "max_players": 0,
+        "latency": None,
+        "motd": None,
+    }
 
-    def _login(self):
-        """تسجيل الدخول إلى حساب Aternos."""
-        if not self.username:
-            raise RuntimeError("ATERNOS_USERNAME غير موجود.")
+def panel_url():
+"""يعيد رابط لوحة Aternos التي يمكن للمالك استخدامها يدويًا."""
+return ATERNOS_URL
 
-        if not self.password:
-            raise RuntimeError("ATERNOS_PASSWORD غير موجود.")
+def start():
+"""
+Aternos لا يوفر API عامة لتشغيل السيرفر.
+لذلك نعيد رابط اللوحة بدل تنفيذ أتمتة مخالفة.
+"""
+return {
+"success": False,
+"manual": True,
+"message": "افتح لوحة Aternos واضغط Start.",
+"url": panel_url(),
+}
 
-        self.client = Client()
-        self.client.login(self.username, self.password)
+def stop():
+"""إرشاد المستخدم لإيقاف السيرفر من لوحة Aternos."""
+return {
+"success": False,
+"manual": True,
+"message": "افتح لوحة Aternos واضغط Stop.",
+"url": panel_url(),
+}
 
-    def get_server(self):
-        """العثور على السيرفر بالـ IP/Address أو الاسم."""
-        with self.lock:
-            if self.server is not None:
-                return self.server
-
-            if self.client is None:
-                self._login()
-
-            servers = self.client.account.list_servers()
-
-            wanted = self.server_address
-
-            for server in servers:
-                address = str(
-                    getattr(server, "address", "")
-                ).strip().lower()
-
-                name = str(
-                    getattr(server, "name", "")
-                ).strip().lower()
-
-                if (
-                    wanted == address
-                    or wanted == name
-                    or wanted in address
-                ):
-                    self.server = server
-                    return server
-
-            available = []
-
-            for server in servers:
-                available.append(
-                    str(
-                        getattr(server, "address", "")
-                    )
-                )
-
-            raise RuntimeError(
-                f"لم يتم العثور على السيرفر: {wanted}. "
-                f"السيرفرات الموجودة: {available}"
-            )
-
-    def start(self):
-        """تشغيل السيرفر."""
-        server = self.get_server()
-        result = server.start()
-        return str(result) if result is not None else "تم إرسال طلب التشغيل."
-
-    def stop(self):
-        """إيقاف السيرفر."""
-        server = self.get_server()
-        result = server.stop()
-        return str(result) if result is not None else "تم إرسال طلب الإيقاف."
-
-    def restart(self):
-        """إعادة تشغيل السيرفر."""
-        server = self.get_server()
-
-        if hasattr(server, "restart"):
-            result = server.restart()
-            return (
-                str(result)
-                if result is not None
-                else "تم إرسال طلب إعادة التشغيل."
-            )
-
-        # بعض الإصدارات لا توفر restart مباشرة.
-        server.stop()
-
-        raise RuntimeError(
-            "المكتبة الحالية لا توفر restart مباشرًا لهذا السيرفر."
-        )
-
-    def status(self):
-        """قراءة حالة السيرفر."""
-        server = self.get_server()
-
-        status = getattr(server, "status", None)
-
-        if callable(status):
-            status = status()
-
-        return str(status) if status is not None else "غير معروف"
+def restart():
+"""إرشاد المستخدم لإعادة تشغيل السيرفر من لوحة Aternos."""
+return {
+"success": False,
+"manual": True,
+"message": "افتح لوحة Aternos ونفّذ Restart.",
+"url": panel_url(),
+}
