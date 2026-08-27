@@ -8,6 +8,11 @@ import telebot
 from telebot import types
 import requests
 
+try:
+    from python_aternos import Client as AternosClient
+except ImportError:
+    AternosClient = None
+
 
 # =========================================================
 # إعدادات البوت
@@ -16,6 +21,9 @@ import requests
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID")
+ATERNOS_USERNAME = os.getenv("ATERNOS_USERNAME")
+ATERNOS_PASSWORD = os.getenv("ATERNOS_PASSWORD")
+ATERNOS_SERVER = os.getenv("ATERNOS_SERVER", "MACESMP37.aternos.me")
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN غير موجود في Render Environment Variables")
@@ -100,6 +108,81 @@ def command_allowed(command):
 
 
 # =========================================================
+# Aternos — تحكم بالحساب المخصص للبوت
+# =========================================================
+
+_aternos_client = None
+_aternos_account = None
+_aternos_server = None
+_aternos_lock = threading.Lock()
+
+
+def get_aternos_server():
+    """تسجيل الدخول مرة واحدة ثم العثور على السيرفر بالعنوان."""
+    global _aternos_client, _aternos_account, _aternos_server
+
+    if AternosClient is None:
+        return None, "python-aternos غير مثبت. أضفه إلى requirements.txt."
+
+    if not ATERNOS_USERNAME or not ATERNOS_PASSWORD:
+        return None, "ضع ATERNOS_USERNAME و ATERNOS_PASSWORD في Render."
+
+    with _aternos_lock:
+        try:
+            if _aternos_server is not None:
+                return _aternos_server, None
+
+            client = AternosClient()
+            client.login(ATERNOS_USERNAME, ATERNOS_PASSWORD)
+            account = client.account
+            servers = account.list_servers()
+
+            wanted = ATERNOS_SERVER.lower().strip()
+            for server in servers:
+                address = str(getattr(server, "address", "")).lower().strip()
+                name = str(getattr(server, "name", "")).lower().strip()
+                if wanted in {address, name} or wanted in address:
+                    _aternos_client = client
+                    _aternos_account = account
+                    _aternos_server = server
+                    return server, None
+
+            return None, f"لم أجد السيرفر {ATERNOS_SERVER} في حساب Aternos."
+        except Exception as exc:
+            _aternos_client = None
+            _aternos_account = None
+            _aternos_server = None
+            return None, str(exc)
+
+
+def aternos_action(action):
+    server, error = get_aternos_server()
+    if error:
+        return False, error
+    try:
+        if action == "start":
+            result = server.start()
+        elif action == "stop":
+            result = server.stop()
+        elif action == "restart":
+            result = server.restart()
+        elif action == "status":
+            result = getattr(server, "status", None)
+            if callable(result):
+                result = result()
+        else:
+            return False, "عملية Aternos غير معروفة."
+        return True, str(result) if result is not None else "OK"
+    except Exception as exc:
+        # إذا انتهت الجلسة، أعد تسجيل الدخول في الطلب التالي.
+        global _aternos_client, _aternos_account, _aternos_server
+        _aternos_client = None
+        _aternos_account = None
+        _aternos_server = None
+        return False, str(exc)
+
+
+# =========================================================
 # Web Server لـ Render
 # =========================================================
 
@@ -139,6 +222,14 @@ def main_menu():
 
     markup = types.InlineKeyboardMarkup(row_width=2)
 
+    markup.add(
+        types.InlineKeyboardButton("🟢 حالة السيرفر", callback_data="status"),
+        types.InlineKeyboardButton("▶️ تشغيل Aternos", callback_data="aternos_start"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("⏹ إيقاف السيرفر", callback_data="server_stop"),
+        types.InlineKeyboardButton("🔄 Restart", callback_data="server_restart"),
+    )
     markup.add(
         types.InlineKeyboardButton("🖥 Console", callback_data="console"),
         types.InlineKeyboardButton("📢 Say", callback_data="say"),
@@ -260,6 +351,12 @@ def callback_handler(call):
 
     if call.data == "console":
         bot.send_message(chat_id, "🖥 أرسل <code>/console list</code> — الأوامر تمر عبر Whitelist.")
+    elif call.data == "status":
+        if not is_admin(call.message):
+            bot.send_message(chat_id, "⛔ غير مصرح لك.")
+            return
+        ok, detail = aternos_action("status")
+        bot.send_message(chat_id, f"🟢 <b>Aternos Status</b>\n\n<code>{detail}</code>" if ok else f"❌ <code>{detail}</code>")
     elif call.data == "say":
         bot.send_message(chat_id, "📢 أرسل <code>/say رسالتك</code>")
     elif call.data == "whitelist":
@@ -280,6 +377,28 @@ def callback_handler(call):
             "<code>/plugins</code>\n"
             "<code>/reload</code>"
         )
+    elif call.data == "aternos_start":
+        if not is_admin(call.message):
+            bot.send_message(chat_id, "⛔ غير مصرح لك.")
+            return
+        ok, detail = aternos_action("start")
+        bot.send_message(chat_id, "▶️ <b>تم إرسال طلب تشغيل Aternos.</b>" if ok else f"❌ فشل التشغيل:\n<code>{detail}</code>")
+    elif call.data == "server_stop":
+        if not is_admin(call.message):
+            bot.send_message(chat_id, "⛔ غير مصرح لك.")
+            return
+        ok, detail = aternos_action("stop")
+        bot.send_message(
+            chat_id,
+            "⏹️ <b>تم إرسال طلب إيقاف Aternos.</b>" if ok
+            else f"❌ فشل إيقاف Aternos: <code>{detail}</code>"
+        )
+    elif call.data == "server_restart":
+        if not is_admin(call.message):
+            bot.send_message(chat_id, "⛔ غير مصرح لك.")
+            return
+        ok, detail = aternos_action("restart")
+        bot.send_message(chat_id, "🔄 <b>تم إرسال طلب Restart إلى Aternos.</b>" if ok else f"❌ فشل Restart: <code>{detail}</code>")
 
 @bot.message_handler(func=lambda message: True)
 def unknown_message(message):
