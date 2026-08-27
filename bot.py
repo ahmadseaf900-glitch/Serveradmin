@@ -39,6 +39,16 @@ CONSOLE_WHITELIST = {
     ).split(",") if x.strip()
 }
 
+# أوامر الإدارة المتاحة من Telegram.
+# أوامر تشغيل/إيقاف Aternos ليست ضمن هذه القائمة لأنها تحتاج API/تحكمًا
+# خاصًا بالاستضافة، وليست أوامر Minecraft Console عادية.
+ADMIN_COMMANDS = {
+    "list", "online", "say", "whitelist", "op", "deop", "kick", "ban",
+    "pardon", "tp", "gamemode", "give", "effect", "time", "weather",
+    "difficulty", "gamerule", "save-all", "save-on", "save-off", "stop",
+    "reload", "plugins", "version", "seed", "locate", "teleport", "kill"
+}
+
 DISCORD_URL = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
 DISCORD_HEADERS = {
     "Authorization": f"Bot {DISCORD_TOKEN}",
@@ -78,7 +88,7 @@ def send_console(command):
 def command_allowed(command):
     command = command.strip().lstrip("/").lower()
     first = command.split()[0] if command.split() else ""
-    return first in CONSOLE_WHITELIST
+    return first in CONSOLE_WHITELIST or first in ADMIN_COMMANDS
 
 
 # =========================================================
@@ -126,6 +136,7 @@ def main_menu():
         types.InlineKeyboardButton("📢 Say", callback_data="say"),
     )
     markup.add(types.InlineKeyboardButton("🟢 Whitelist", callback_data="whitelist"))
+    markup.add(types.InlineKeyboardButton("👑 Admin", callback_data="admin"))
 
     return markup
 
@@ -218,6 +229,22 @@ def callback_handler(call):
         bot.send_message(chat_id, "📢 أرسل <code>/say رسالتك</code>")
     elif call.data == "whitelist":
         bot.send_message(chat_id, "🟢 <code>/whitelist add Player</code>\n<code>/whitelist remove Player</code>\n<code>/whitelist list</code>")
+    elif call.data == "admin":
+        bot.send_message(
+            chat_id,
+            "👑 <b>أوامر الإدارة</b>\n\n"
+            "<code>/op Player</code>\n"
+            "<code>/deop Player</code>\n"
+            "<code>/kick Player [سبب]</code>\n"
+            "<code>/ban Player [سبب]</code>\n"
+            "<code>/pardon Player</code>\n"
+            "<code>/gamemode creative Player</code>\n"
+            "<code>/tp Player Player2</code>\n"
+            "<code>/give Player item 1</code>\n"
+            "<code>/save-all</code>\n"
+            "<code>/plugins</code>\n"
+            "<code>/reload</code>"
+        )
 
 @bot.message_handler(func=lambda message: True)
 def unknown_message(message):
