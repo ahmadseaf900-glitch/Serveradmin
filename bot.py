@@ -34,15 +34,10 @@ if not DISCORD_CHANNEL_ID:
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-ADMIN_USERNAMES = {
-    x.strip().lstrip("@").lower() for x in os.getenv("ADMIN_USERNAMES", "").split(",")
-    if x.strip()
-}
-
-AUTH_PIN = os.getenv("ADMIN_PIN", "")
-AUTHORIZED_USERS = set()
-INVITE_TOKEN = os.getenv("INVITE_TOKEN", "")
-AUTHORIZED_USERS_PERSISTENT = {
+# نظام الدخول الوحيد: رابط دعوة يحتوي على INVITE_TOKEN.
+# بعد فتح الرابط بنجاح يُحفظ Telegram ID في AUTHORIZED_USER_IDS من Render.
+INVITE_TOKEN = os.getenv("INVITE_TOKEN", "Adminsecretcodekassemandargus").strip()
+AUTHORIZED_USERS = {
     int(x.strip()) for x in os.getenv("AUTHORIZED_USER_IDS", "").split(",")
     if x.strip().isdigit()
 }
@@ -80,21 +75,16 @@ DISCORD_HEADERS = {
 }
 
 def is_admin(message):
-    return message.from_user.id in AUTHORIZED_USERS or message.from_user.id in AUTHORIZED_USERS_PERSISTENT
+    return message.from_user.id in AUTHORIZED_USERS
 
 def is_callback_admin(call):
-    return call.from_user.id in AUTHORIZED_USERS or call.from_user.id in AUTHORIZED_USERS_PERSISTENT
-
-AUTHORIZED_CHATS = set()
-
-def require_confirmation(message):
-    if message.from_user.id in AUTHORIZED_USERS:
-        return True
-    bot.send_message(message.chat.id, "🔐 أرسل رمز الدخول بهذا الشكل:\n<code>/auth 1234</code>")
-    return False
+    return call.from_user.id in AUTHORIZED_USERS
 
 def admin_only(message):
-    return require_confirmation(message)
+    if not is_admin(message):
+        bot.reply_to(message, "⛔ غير مصرح لك. افتح البوت من رابط الدعوة الخاص.")
+        return False
+    return True
 
 def send_to_discord(content):
     try:
@@ -285,21 +275,9 @@ def start_command(message):
         reply_markup=main_menu()
     )
 
-@bot.message_handler(commands=["auth"])
-def auth_command(message):
-    if not AUTH_PIN:
-        bot.reply_to(message, "❌ ADMIN_PIN غير مضبوط في Render.")
-        return
-    supplied = message.text.partition(" ")[2].strip()
-    if supplied and supplied == AUTH_PIN:
-        AUTHORIZED_USERS.add(message.from_user.id)
-        bot.reply_to(message, "✅ تم التحقق بنجاح. كل ميزات الإدارة أصبحت متاحة لك.", reply_markup=main_menu())
-    else:
-        bot.reply_to(message, "⛔ رمز التحقق غير صحيح.")
-
 @bot.message_handler(commands=["invite"])
 def invite_command(message):
-    """رابط دعوة خاص: /invite TOKEN — متاح فقط للأدمن الحالي."""
+    """إظهار رابط الدعوة للأدمن المصرح له فقط."""
     if not is_admin(message):
         return
     if not INVITE_TOKEN:
@@ -394,11 +372,6 @@ def callback_handler(call):
 
     except Exception:
         pass
-
-    if call.data == "confirm_admin":
-        bot.send_message(chat_id, "🔐 استخدم /auth <PIN> لتأكيد هويتك.")
-        return
-
 
     # -------------------------
     # Status
