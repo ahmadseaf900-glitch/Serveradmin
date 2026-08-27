@@ -34,13 +34,6 @@ if not DISCORD_CHANNEL_ID:
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-# نظام الدخول الوحيد: رابط دعوة يحتوي على INVITE_TOKEN.
-INVITE_TOKEN = os.getenv("INVITE_TOKEN", "Adminsecretcodekassemandargus").strip()
-AUTHORIZED_USERS = {
-    int(x.strip()) for x in os.getenv("AUTHORIZED_USER_IDS", "").split(",")
-    if x.strip().isdigit()
-}
-
 CONSOLE_WHITELIST = {
     x.strip().lower().lstrip("/")
     for x in os.getenv(
@@ -74,15 +67,12 @@ DISCORD_HEADERS = {
 }
 
 def is_admin(message):
-    return message.from_user.id in AUTHORIZED_USERS
+    return True
 
 def is_callback_admin(call):
-    return call.from_user.id in AUTHORIZED_USERS
+    return True
 
 def admin_only(message):
-    if not is_admin(message):
-        bot.reply_to(message, "⛔ غير مصرح لك. افتح البوت من رابط الدعوة الخاص.")
-        return False
     return True
 
 def send_to_discord(content):
@@ -254,23 +244,8 @@ def start_command(message):
 
     telegram_id = message.from_user.id
     username = message.from_user.username or "بدون username"
-    args = message.text.split(maxsplit=1)
-    invite = args[1].strip() if len(args) > 1 else ""
-    authorized = is_admin(message)
-
-    # السماح فقط لمن فتح رابط الدعوة الصحيح.
-    if invite and invite == INVITE_TOKEN:
-        AUTHORIZED_USERS.add(telegram_id)
-        authorized = True
-        print(
-            f"[AUTH] INVITE ACCEPTED | Telegram ID: {telegram_id} | "
-            f"Username: @{username}",
-            flush=True
-        )
-
     print(
-        f"[AUTH] /start | Telegram ID: {telegram_id} | "
-        f"Username: @{username} | Authorized: {'YES' if authorized else 'NO'}",
+        f"[START] Telegram ID: {telegram_id} | Username: @{username}",
         flush=True
     )
 
@@ -280,26 +255,11 @@ def start_command(message):
         f"🆔 <b>Telegram ID:</b> <code>{telegram_id}</code>"
     )
 
-    if authorized:
-        bot.send_message(message.chat.id, text, reply_markup=main_menu())
-    else:
-        bot.send_message(
-            message.chat.id,
-            "🔒 <b>هذا البوت خاص.</b>\n\n"
-            "⛔ افتح رابط الدعوة الخاص أولًا ثم اضغط Start."
-        )
+    bot.send_message(message.chat.id, text, reply_markup=main_menu())
 
 @bot.message_handler(commands=["invite"])
 def invite_command(message):
-    """إظهار رابط الدعوة للأدمن المصرح له فقط."""
-    if not is_admin(message):
-        return
-    if not INVITE_TOKEN:
-        bot.reply_to(message, "❌ INVITE_TOKEN غير مضبوط في Render.")
-        return
-    me = bot.get_me()
-    link = f"https://t.me/{me.username}?start={INVITE_TOKEN}"
-    bot.reply_to(message, f"🔗 رابط الدعوة الخاص:\n{link}")
+    bot.reply_to(message, "ℹ️ نظام الحماية معطل. جميع المستخدمين يستطيعون استخدام البوت.")
 
 
 @bot.message_handler(commands=["console"])
@@ -444,10 +404,7 @@ def callback_handler(call):
 
 @bot.message_handler(func=lambda message: True)
 def unknown_message(message):
-    if is_admin(message):
-        bot.send_message(message.chat.id, "استخدم /start أو الأوامر الموجودة في القائمة.", reply_markup=main_menu())
-    else:
-        bot.reply_to(message, "⛔ غير مصرح لك باستخدام هذا البوت.")
+    bot.send_message(message.chat.id, "استخدم /start أو الأوامر الموجودة في القائمة.", reply_markup=main_menu())
 
 
 # =========================================================
