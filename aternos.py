@@ -1,179 +1,120 @@
-"""
-Aternos manager.
-
-يستخدم python-aternos لإدارة سيرفر Aternos.
-"""
-
 import os
 import threading
 
-try:
-    from python_aternos import Client
-except ImportError:
-    Client = None
+from python_aternos import Client
 
 
 class AternosManager:
     """
     مدير اتصال Aternos.
-
-    يحتفظ بجلسة واحدة ويعيد استخدامها بدل تسجيل الدخول
-    في كل عملية.
+    يسجل الدخول مرة واحدة ويحاول العثور على السيرفر المطلوب.
     """
 
     def __init__(self):
-        self.username = os.getenv(
-            "ATERNOS_USERNAME",
-            ""
-        ).strip()
-
-        self.password = os.getenv(
-            "ATERNOS_PASSWORD",
-            ""
-        ).strip()
-
+        self.username = os.getenv("ATERNOS_USERNAME", "").strip()
+        self.password = os.getenv("ATERNOS_PASSWORD", "").strip()
         self.server_address = os.getenv(
             "ATERNOS_SERVER",
-            ""
+            "MACESMP37.aternos.me"
         ).strip().lower()
 
         self.client = None
-        self.account = None
         self.server = None
-
         self.lock = threading.Lock()
 
-    def _check_config(self):
-        """التأكد من وجود الإعدادات المطلوبة."""
-
-        if Client is None:
-            raise RuntimeError(
-                "python-aternos غير مثبت."
-            )
-
+    def _login(self):
+        """تسجيل الدخول إلى حساب Aternos."""
         if not self.username:
-            raise RuntimeError(
-                "ATERNOS_USERNAME غير مضبوط."
-            )
+            raise RuntimeError("ATERNOS_USERNAME غير موجود.")
 
         if not self.password:
-            raise RuntimeError(
-                "ATERNOS_PASSWORD غير مضبوط."
-            )
+            raise RuntimeError("ATERNOS_PASSWORD غير موجود.")
 
-        if not self.server_address:
-            raise RuntimeError(
-                "ATERNOS_SERVER غير مضبوط."
-            )
+        self.client = Client()
+        self.client.login(self.username, self.password)
 
-    def connect(self):
-        """
-        تسجيل الدخول والعثور على السيرفر.
-        """
-
-        self._check_config()
-
+    def get_server(self):
+        """العثور على السيرفر بالـ IP/Address أو الاسم."""
         with self.lock:
-
             if self.server is not None:
                 return self.server
 
-            self.client = Client()
+            if self.client is None:
+                self._login()
 
-            self.client.login(
-                self.username,
-                self.password
-            )
+            servers = self.client.account.list_servers()
 
-            self.account = self.client.account
-
-            servers = self.account.list_servers()
+            wanted = self.server_address
 
             for server in servers:
-
                 address = str(
-                    getattr(
-                        server,
-                        "address",
-                        ""
-                    )
-                ).lower().strip()
+                    getattr(server, "address", "")
+                ).strip().lower()
 
                 name = str(
-                    getattr(
-                        server,
-                        "name",
-                        ""
-                    )
-                ).lower().strip()
+                    getattr(server, "name", "")
+                ).strip().lower()
 
                 if (
-                    address == self.server_address
-                    or name == self.server_address
-                    or self.server_address in address
+                    wanted == address
+                    or wanted == name
+                    or wanted in address
                 ):
-
                     self.server = server
-
                     return server
 
+            available = []
+
+            for server in servers:
+                available.append(
+                    str(
+                        getattr(server, "address", "")
+                    )
+                )
+
             raise RuntimeError(
-                f"لم يتم العثور على السيرفر: "
-                f"{self.server_address}"
+                f"لم يتم العثور على السيرفر: {wanted}. "
+                f"السيرفرات الموجودة: {available}"
             )
-
-    def reset(self):
-        """إعادة ضبط الجلسة."""
-
-        with self.lock:
-
-            self.client = None
-            self.account = None
-            self.server = None
 
     def start(self):
         """تشغيل السيرفر."""
-
-        server = self.connect()
-
-        return server.start()
+        server = self.get_server()
+        result = server.start()
+        return str(result) if result is not None else "تم إرسال طلب التشغيل."
 
     def stop(self):
         """إيقاف السيرفر."""
-
-        server = self.connect()
-
-        return server.stop()
+        server = self.get_server()
+        result = server.stop()
+        return str(result) if result is not None else "تم إرسال طلب الإيقاف."
 
     def restart(self):
         """إعادة تشغيل السيرفر."""
+        server = self.get_server()
 
-        server = self.connect()
+        if hasattr(server, "restart"):
+            result = server.restart()
+            return (
+                str(result)
+                if result is not None
+                else "تم إرسال طلب إعادة التشغيل."
+            )
 
-        restart = getattr(
-            server,
-            "restart",
-            None
-        )
-
-        if callable(restart):
-            return restart()
-
+        # بعض الإصدارات لا توفر restart مباشرة.
         server.stop()
-        return server.start()
+
+        raise RuntimeError(
+            "المكتبة الحالية لا توفر restart مباشرًا لهذا السيرفر."
+        )
 
     def status(self):
-        """الحصول على حالة السيرفر."""
+        """قراءة حالة السيرفر."""
+        server = self.get_server()
 
-        server = self.connect()
-
-        status = getattr(
-            server,
-            "status",
-            None
-        )
+        status = getattr(server, "status", None)
 
         if callable(status):
-            return status()
+            status = status()
 
-        return status
+        return str(status) if status is not None else "غير معروف"
