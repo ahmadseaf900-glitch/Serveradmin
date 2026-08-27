@@ -1,31 +1,148 @@
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import requests
 import telebot
 from telebot import types
-from mcstatus import JavaServer
 
 
 # =========================================================
-# إعدادات البوت
+# الإعدادات
 # =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID")
 
 if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN غير موجود في Render Environment Variables")
+    raise RuntimeError("BOT_TOKEN غير موجود")
+
+if not DISCORD_TOKEN:
+    raise RuntimeError("DISCORD_TOKEN غير موجود")
+
+if not DISCORD_CHANNEL_ID:
+    raise RuntimeError("DISCORD_CHANNEL_ID غير موجود")
+
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 
 # =========================================================
-# إعدادات سيرفر Minecraft
+# الأدمن
 # =========================================================
 
-SERVER_HOST = "MACESMP37.aternos.me"
-SERVER_PORT = 44114
+ADMIN_IDS = {
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", "").split(",")
+    if x.strip().isdigit()
+}
+
+
+# =========================================================
+# أوامر مسموحة
+# =========================================================
+
+CONSOLE_WHITELIST = {
+    x.strip().lower().lstrip("/")
+    for x in os.getenv(
+        "CONSOLE_WHITELIST",
+        "say,whitelist,list,online,save-all"
+    ).split(",")
+    if x.strip()
+}
+
+
+# =========================================================
+# Discord
+# =========================================================
+
+DISCORD_URL = (
+    f"https://discord.com/api/v10/channels/"
+    f"{DISCORD_CHANNEL_ID}/messages"
+)
+
+DISCORD_HEADERS = {
+    "Authorization": f"Bot {DISCORD_TOKEN}",
+    "Content-Type": "application/json",
+}
+
+
+def is_admin(message):
+    return message.from_user.id in ADMIN_IDS
+
+
+def admin_only(message):
+    if not is_admin(message):
+        bot.reply_to(
+            message,
+            "⛔ <b>ليس لديك صلاحية Admin.</b>"
+        )
+        return False
+
+    return True
+
+
+def send_to_discord(text):
+    try:
+
+        response = requests.post(
+            DISCORD_URL,
+            headers=DISCORD_HEADERS,
+            json={
+                "content": text
+            },
+            timeout=15
+        )
+
+        if response.status_code not in (200, 201):
+
+            print(
+                "Discord Error:",
+                response.status_code,
+                response.text[:500]
+            )
+
+            return False
+
+        return True
+
+    except Exception as e:
+
+        print("Discord connection error:", e)
+
+        return False
+
+
+# =========================================================
+# إرسال أمر إلى DiscordSRV
+# =========================================================
+
+def send_console(command):
+
+    command = command.strip().lstrip("/")
+
+    return send_to_discord(
+        "!c " + command
+    )
+
+
+# =========================================================
+# التحقق من Whitelist
+# =========================================================
+
+def command_allowed(command):
+
+    command = command.strip().lstrip("/")
+
+    if not command:
+        return False
+
+    first = command.split()[0].lower()
+
+    return first in CONSOLE_WHITELIST
 
 
 # =========================================================
@@ -35,21 +152,41 @@ SERVER_PORT = 44114
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         self.send_response(200)
-        self.send_header("Content-type", "text/plain")
+
+        self.send_header(
+            "Content-type",
+            "text/plain"
+        )
+
         self.end_headers()
-        self.wfile.write(b"Telegram Bot is running!")
+
+        self.wfile.write(
+            b"Telegram Discord Bridge is running!"
+        )
 
     def log_message(self, format, *args):
         return
 
 
 def start_web_server():
-    port = int(os.environ.get("PORT", 10000))
 
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    port = int(
+        os.environ.get(
+            "PORT",
+            "10000"
+        )
+    )
 
-    print(f"🌐 Web server running on port {port}")
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    print(
+        f"🌐 Web server running on port {port}"
+    )
 
     server.serve_forever()
 
@@ -61,86 +198,36 @@ threading.Thread(
 
 
 # =========================================================
-# فحص السيرفر
-# =========================================================
-
-def get_server_status():
-
-    try:
-
-        server = JavaServer(
-            SERVER_HOST,
-            SERVER_PORT
-        )
-
-        status = server.status()
-
-        return {
-            "online": True,
-            "players": status.players.online,
-            "max_players": status.players.max,
-            "version": status.version.name,
-            "latency": round(status.latency)
-        }
-
-    except Exception as e:
-
-        print("Server status error:", e)
-
-        return {
-            "online": False,
-            "players": 0,
-            "max_players": 0,
-            "version": "Unknown",
-            "latency": 0
-        }
-
-
-# =========================================================
 # القائمة الرئيسية
 # =========================================================
 
 def main_menu():
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-
-    start_button = types.InlineKeyboardButton(
-        "🟢 Start",
-        callback_data="start_server"
-    )
-
-    stop_button = types.InlineKeyboardButton(
-        "🔴 Stop",
-        callback_data="stop_server"
-    )
-
-    restart_button = types.InlineKeyboardButton(
-        "🔄 Restart",
-        callback_data="restart_server"
-    )
-
-    status_button = types.InlineKeyboardButton(
-        "📊 Status",
-        callback_data="status_server"
-    )
-
-    players_button = types.InlineKeyboardButton(
-        "👥 Players",
-        callback_data="players_server"
+    markup = types.InlineKeyboardMarkup(
+        row_width=2
     )
 
     markup.add(
-        start_button,
-        stop_button
+
+        types.InlineKeyboardButton(
+            "🖥 Console",
+            callback_data="console"
+        ),
+
+        types.InlineKeyboardButton(
+            "📢 Say",
+            callback_data="say"
+        )
+
     )
 
     markup.add(
-        restart_button,
-        status_button
-    )
 
-    markup.add(
-        players_button
+        types.InlineKeyboardButton(
+            "🟢 Whitelist",
+            callback_data="whitelist"
+        )
+
     )
 
     return markup
@@ -150,70 +237,232 @@ def main_menu():
 # /start
 # =========================================================
 
-@bot.message_handler(commands=["start"])
+@bot.message_handler(
+    commands=["start"]
+)
 def start_command(message):
 
-    text = (
-        "🤖 <b>البوت يعمل بنجاح!</b>\n\n"
-        "أهلاً بك 👋\n\n"
-        "🎮 <b>بوت إدارة سيرفر ماينكرافت</b>\n\n"
-        f"🌐 السيرفر:\n"
-        f"<code>{SERVER_HOST}:{SERVER_PORT}</code>\n\n"
-        "اختر العملية:"
-    )
+    if not is_admin(message):
+
+        bot.send_message(
+            message.chat.id,
+            "⛔ غير مصرح لك باستخدام البوت."
+        )
+
+        return
 
     bot.send_message(
+
         message.chat.id,
-        text,
+
+        "🤖 <b>Telegram → Discord → DiscordSRV</b>\n\n"
+        "🟢 <b>البوت يعمل بنجاح!</b>\n\n"
+        "🎮 اختر العملية:",
+
         reply_markup=main_menu()
+
     )
 
 
 # =========================================================
-# أي رسالة نصية
+# /console
 # =========================================================
 
-@bot.message_handler(func=lambda message: True)
-def text_handler(message):
+@bot.message_handler(
+    commands=["console"]
+)
+def console_command(message):
 
-    if message.text == "Start":
-        bot.send_message(
-            message.chat.id,
-            "🟢 <b>Start</b>\n\n"
-            "⚠️ تشغيل Aternos مباشرة يحتاج ربط API/طريقة تشغيل خاصة.\n"
-            "حاليًا أستطيع فحص حالة السيرفر."
+    if not admin_only(message):
+        return
+
+    command = message.text.partition(" ")[2].strip()
+
+    if not command:
+
+        bot.reply_to(
+            message,
+            "مثال:\n"
+            "<code>/console list</code>"
         )
 
-    elif message.text == "Stop":
+        return
 
-        bot.send_message(
-            message.chat.id,
-            "🔴 <b>Stop</b>\n\n"
-            "⚠️ إيقاف Aternos يحتاج ربط API."
+    if not command_allowed(command):
+
+        bot.reply_to(
+            message,
+            "⛔ هذا الأمر غير موجود في Console Whitelist."
         )
 
-    elif message.text == "Restart":
+        return
 
-        bot.send_message(
-            message.chat.id,
-            "🔄 <b>Restart</b>\n\n"
-            "⚠️ إعادة التشغيل تحتاج ربط Aternos API."
+    if send_console(command):
+
+        bot.reply_to(
+            message,
+            "✅ <b>تم إرسال الأمر إلى Discord.</b>\n\n"
+            f"🎮 <code>{command}</code>"
         )
-
-    elif message.text == "Status":
-
-        send_status(message.chat.id)
-
-    elif message.text == "Players":
-
-        send_players(message.chat.id)
 
     else:
 
-        bot.send_message(
-            message.chat.id,
-            "اختر أحد الأزرار الموجودة في القائمة 👇",
-            reply_markup=main_menu()
+        bot.reply_to(
+            message,
+            "❌ فشل إرسال الأمر إلى Discord."
+        )
+
+
+# =========================================================
+# /say
+# =========================================================
+
+@bot.message_handler(
+    commands=["say"]
+)
+def say_command(message):
+
+    if not admin_only(message):
+        return
+
+    text = message.text.partition(" ")[2].strip()
+
+    if not text:
+
+        bot.reply_to(
+            message,
+            "مثال:\n"
+            "<code>/say أهلاً باللاعبين!</code>"
+        )
+
+        return
+
+    if "say" not in CONSOLE_WHITELIST:
+
+        bot.reply_to(
+            message,
+            "⛔ أمر say غير مسموح."
+        )
+
+        return
+
+    if send_console(
+        "say " + text
+    ):
+
+        bot.reply_to(
+            message,
+            "📢 <b>تم إرسال الرسالة إلى DiscordSRV.</b>"
+        )
+
+    else:
+
+        bot.reply_to(
+            message,
+            "❌ فشل إرسال الرسالة."
+        )
+
+
+# =========================================================
+# /whitelist
+# =========================================================
+
+@bot.message_handler(
+    commands=["whitelist"]
+)
+def whitelist_command(message):
+
+    if not admin_only(message):
+        return
+
+    args = (
+        message.text
+        .partition(" ")[2]
+        .strip()
+        .split()
+    )
+
+    if not args:
+
+        bot.reply_to(
+            message,
+            "<code>/whitelist add Player</code>\n"
+            "<code>/whitelist remove Player</code>\n"
+            "<code>/whitelist list</code>"
+        )
+
+        return
+
+    action = args[0].lower()
+
+    if action not in {
+        "add",
+        "remove",
+        "list"
+    }:
+
+        bot.reply_to(
+            message,
+            "❌ استخدم add أو remove أو list."
+        )
+
+        return
+
+    if action == "list":
+
+        command = "whitelist list"
+
+    else:
+
+        if len(args) != 2:
+
+            bot.reply_to(
+                message,
+                "مثال:\n"
+                "<code>/whitelist add Player</code>"
+            )
+
+            return
+
+        player = args[1]
+
+        if not re.fullmatch(
+            r"[A-Za-z0-9_]{1,16}",
+            player
+        ):
+
+            bot.reply_to(
+                message,
+                "❌ اسم اللاعب غير صالح."
+            )
+
+            return
+
+        command = (
+            f"whitelist {action} {player}"
+        )
+
+    if not command_allowed(command):
+
+        bot.reply_to(
+            message,
+            "⛔ أمر whitelist غير مسموح."
+        )
+
+        return
+
+    if send_console(command):
+
+        bot.reply_to(
+            message,
+            "✅ <b>تم إرسال أمر Whitelist إلى Discord.</b>"
+        )
+
+    else:
+
+        bot.reply_to(
+            message,
+            "❌ فشل إرسال الأمر."
         )
 
 
@@ -221,185 +470,77 @@ def text_handler(message):
 # الأزرار
 # =========================================================
 
-@bot.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(
+    func=lambda call: True
+)
 def callback_handler(call):
+
+    if call.from_user.id not in ADMIN_IDS:
+
+        bot.answer_callback_query(
+            call.id,
+            "⛔ غير مصرح",
+            show_alert=True
+        )
+
+        return
+
+    bot.answer_callback_query(
+        call.id
+    )
 
     chat_id = call.message.chat.id
 
-    try:
-
-        bot.answer_callback_query(call.id)
-
-    except Exception:
-        pass
-
-
-    # -------------------------
-    # Status
-    # -------------------------
-
-    if call.data == "status_server":
-
-        send_status(chat_id)
-
-
-    # -------------------------
-    # Players
-    # -------------------------
-
-    elif call.data == "players_server":
-
-        send_players(chat_id)
-
-
-    # -------------------------
-    # Start
-    # -------------------------
-
-    elif call.data == "start_server":
+    if call.data == "console":
 
         bot.send_message(
             chat_id,
-            "🟢 <b>Start</b>\n\n"
-            "⚠️ تشغيل سيرفر Aternos يحتاج ربط API.\n\n"
-            "📌 السيرفر الحالي:\n"
-            f"<code>{SERVER_HOST}:{SERVER_PORT}</code>"
+            "🖥 <b>Console</b>\n\n"
+            "أرسل:\n"
+            "<code>/console list</code>"
         )
 
-
-    # -------------------------
-    # Stop
-    # -------------------------
-
-    elif call.data == "stop_server":
+    elif call.data == "say":
 
         bot.send_message(
             chat_id,
-            "🔴 <b>Stop</b>\n\n"
-            "⚠️ إيقاف السيرفر يحتاج ربط Aternos API."
+            "📢 أرسل:\n"
+            "<code>/say رسالتك</code>"
         )
 
-
-    # -------------------------
-    # Restart
-    # -------------------------
-
-    elif call.data == "restart_server":
+    elif call.data == "whitelist":
 
         bot.send_message(
             chat_id,
-            "🔄 <b>Restart</b>\n\n"
-            "⚠️ إعادة تشغيل السيرفر تحتاج ربط Aternos API."
+            "🟢 <b>Whitelist</b>\n\n"
+            "<code>/whitelist add Player</code>\n"
+            "<code>/whitelist remove Player</code>\n"
+            "<code>/whitelist list</code>"
         )
 
 
 # =========================================================
-# إرسال حالة السيرفر
+# الرسائل غير المعروفة
 # =========================================================
 
-def send_status(chat_id):
+@bot.message_handler(
+    func=lambda message: True
+)
+def unknown_message(message):
 
-    bot.send_message(
-        chat_id,
-        "⏳ جاري فحص السيرفر..."
-    )
+    if is_admin(message):
 
-    status = get_server_status()
-
-    if status["online"]:
-
-        text = (
-            "🟢 <b>السيرفر Online</b>\n\n"
-            f"🌐 <b>IP:</b>\n"
-            f"<code>{SERVER_HOST}:{SERVER_PORT}</code>\n\n"
-            f"👥 اللاعبين: "
-            f"<b>{status['players']}/{status['max_players']}</b>\n\n"
-            f"🎮 الإصدار: <code>{status['version']}</code>\n"
-            f"📡 Ping: <b>{status['latency']}ms</b>"
+        bot.send_message(
+            message.chat.id,
+            "استخدم /start لعرض القائمة.",
+            reply_markup=main_menu()
         )
 
     else:
 
-        text = (
-            "🔴 <b>السيرفر Offline</b>\n\n"
-            f"🌐 <code>{SERVER_HOST}:{SERVER_PORT}</code>\n\n"
-            "قد يكون السيرفر متوقفًا أو أن Aternos نائم."
-        )
-
-    bot.send_message(
-        chat_id,
-        text,
-        reply_markup=main_menu()
-    )
-
-
-# =========================================================
-# اللاعبين
-# =========================================================
-
-def send_players(chat_id):
-
-    try:
-
-        server = JavaServer(
-            SERVER_HOST,
-            SERVER_PORT
-        )
-
-        status = server.status()
-
-        if status.players.online == 0:
-
-            bot.send_message(
-                chat_id,
-                "👥 <b>اللاعبون</b>\n\n"
-                "لا يوجد لاعبين حاليًا.",
-                reply_markup=main_menu()
-            )
-
-            return
-
-
-        players = []
-
-        if status.players.sample:
-
-            for player in status.players.sample:
-
-                players.append(
-                    f"👤 {player.name}"
-                )
-
-
-        if players:
-
-            text = (
-                "👥 <b>اللاعبون المتصلون</b>\n\n"
-                + "\n".join(players)
-            )
-
-        else:
-
-            text = (
-                "👥 <b>اللاعبون</b>\n\n"
-                f"عدد اللاعبين: {status.players.online}\n\n"
-                "⚠️ السيرفر لم يعطِ أسماء اللاعبين."
-            )
-
-
-        bot.send_message(
-            chat_id,
-            text,
-            reply_markup=main_menu()
-        )
-
-
-    except Exception:
-
-        bot.send_message(
-            chat_id,
-            "🔴 السيرفر Offline أو لا يمكن الوصول إليه.",
-            reply_markup=main_menu()
+        bot.reply_to(
+            message,
+            "⛔ غير مصرح لك باستخدام هذا البوت."
         )
 
 
@@ -409,45 +550,44 @@ def send_players(chat_id):
 
 if __name__ == "__main__":
 
-    print("🤖 Telegram Bot Started")
+    print(
+        "🤖 Telegram Bot Started"
+    )
 
-    # مهم جدًا:
-    # إزالة Webhook حتى لا يتعارض مع polling
     try:
+
         bot.remove_webhook()
-        print("✅ Webhook removed")
+
+        print(
+            "✅ Webhook removed"
+        )
+
     except Exception as e:
-        print("⚠️ Webhook removal:", e)
 
+        print(
+            "⚠️ Webhook removal:",
+            e
+        )
 
-    print("🚀 Starting Telegram polling...")
+    print(
+        "🚀 Starting Telegram polling..."
+    )
 
-
-    # إعادة المحاولة تلقائيًا عند حدوث 409 بدل توقف البوت.
-    # 409 يعني أن Telegram يرى getUpdates آخر لنفس التوكن.
     while True:
+
         try:
+
             bot.infinity_polling(
                 skip_pending=True,
                 timeout=60,
                 long_polling_timeout=60
             )
-        except telebot.apihelper.ApiTelegramException as e:
-            error_text = str(e)
-
-            if "409" in error_text or "Conflict" in error_text:
-                print("⚠️ Telegram 409 Conflict — إعادة المحاولة بعد 10 ثوانٍ...")
-                time.sleep(10)
-                continue
-
-            if "401" in error_text or "Unauthorized" in error_text:
-                print("❌ Telegram 401 Unauthorized — تحقق من BOT_TOKEN في Render.")
-                time.sleep(30)
-                continue
-
-            print(f"❌ Telegram API error: {e}")
-            time.sleep(10)
 
         except Exception as e:
-            print(f"❌ Polling error: {e}")
+
+            print(
+                "❌ Polling error:",
+                e
+            )
+
             time.sleep(10)
