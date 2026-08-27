@@ -259,7 +259,8 @@ def start_command(message):
 
     text = (
         "🤖 <b>Telegram → Discord → DiscordSRV</b>\n\n"
-        "🟢 البوت يعمل. اختر العملية:"
+        "🟢 البوت يعمل. اختر العملية:\n\n"
+        f"🆔 <b>Telegram ID:</b> <code>{telegram_id}</code>"
     )
 
     bot.send_message(
