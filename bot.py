@@ -49,6 +49,14 @@ ADMIN_COMMANDS = {
     "reload", "plugins", "version", "seed", "locate", "teleport", "kill"
 }
 
+# أوامر Telegram المباشرة التي تبدأ بـ / وتُرسل إلى Minecraft Console.
+DIRECT_COMMANDS = {
+    "op", "deop", "kick", "ban", "pardon", "tp", "teleport", "give",
+    "gamemode", "effect", "time", "weather", "difficulty", "gamerule",
+    "save-all", "save-on", "save-off", "stop", "reload", "plugins", "version",
+    "seed", "locate", "kill", "list", "online", "whitelist"
+}
+
 DISCORD_URL = f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages"
 DISCORD_HEADERS = {
     "Authorization": f"Bot {DISCORD_TOKEN}",
@@ -200,6 +208,33 @@ def whitelist_command(message):
         return
     ok, detail = send_console(command)
     bot.reply_to(message, "✅ تم إرسال أمر الـWhitelist." if ok else f"❌ فشل: <code>{detail}</code>")
+
+
+@bot.message_handler(func=lambda message: bool(message.text) and message.text.startswith("/"))
+def direct_admin_command(message):
+    """تنفيذ أوامر الإدارة المكتوبة مباشرة مثل /op aizenx."""
+    if not admin_only(message):
+        return
+
+    raw = message.text[1:].strip()
+    if not raw:
+        return
+
+    command_name = raw.split()[0].lower()
+
+    if command_name not in DIRECT_COMMANDS:
+        bot.reply_to(message, "❌ الأمر غير موجود. استخدم /start لعرض الأوامر المتاحة.")
+        return
+
+    ok, detail = send_console(raw)
+    if ok:
+        bot.reply_to(
+            message,
+            "✅ <b>تم إرسال الأمر إلى DiscordSRV.</b>\n\n"
+            f"🎮 <code>{raw}</code>"
+        )
+    else:
+        bot.reply_to(message, f"❌ فشل إرسال الأمر: <code>{detail}</code>")
 
 
 # =========================================================
