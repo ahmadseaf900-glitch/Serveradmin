@@ -1,69 +1,69 @@
 import os
-import requests
+from mcstatus import JavaServer
 
 ATERNOS_URL = os.getenv(
 "ATERNOS_URL",
-"https://aternos.org/server/"
+"https://aternos.org/"
 )
 
-def get_status(server_address: str):
-"""
-يتحقق من حالة سيرفر Minecraft عبر عنوانه.
-لا يحتاج إلى تسجيل الدخول إلى Aternos.
-"""
-try:
-from mcstatus import JavaServer
+SERVER_ADDRESS = os.getenv(
+"ATERNOS_SERVER",
+"MACESMP37.aternos.me"
+)
 
-    server = JavaServer.lookup(server_address)
-    status = server.status()
+def panel_url():
+"""Return the Aternos panel URL."""
+return ATERNOS_URL
+
+def status():
+"""Check the Minecraft server status without logging into Aternos."""
+try:
+server = JavaServer.lookup(SERVER_ADDRESS)
+result = server.status()
 
     return {
+        "success": True,
         "online": True,
-        "players": status.players.online,
-        "max_players": status.players.max,
-        "latency": round(status.latency),
-        "motd": str(status.motd),
+        "players": result.players.online,
+        "max_players": result.players.max,
+        "latency": round(result.latency),
+        "motd": str(result.motd),
     }
 
-except Exception:
+except Exception as exc:
     return {
+        "success": True,
         "online": False,
         "players": 0,
         "max_players": 0,
         "latency": None,
         "motd": None,
+        "error": str(exc),
     }
 
-def panel_url():
-"""يعيد رابط لوحة Aternos التي يمكن للمالك استخدامها يدويًا."""
-return ATERNOS_URL
-
 def start():
-"""
-Aternos لا يوفر API عامة لتشغيل السيرفر.
-لذلك نعيد رابط اللوحة بدل تنفيذ أتمتة مخالفة.
-"""
+"""Return instructions for manually starting the Aternos server."""
 return {
 "success": False,
 "manual": True,
-"message": "افتح لوحة Aternos واضغط Start.",
 "url": panel_url(),
+"message": "افتح لوحة Aternos واضغط Start.",
 }
 
 def stop():
-"""إرشاد المستخدم لإيقاف السيرفر من لوحة Aternos."""
+"""Return instructions for manually stopping the Aternos server."""
 return {
 "success": False,
 "manual": True,
-"message": "افتح لوحة Aternos واضغط Stop.",
 "url": panel_url(),
+"message": "افتح لوحة Aternos واضغط Stop.",
 }
 
 def restart():
-"""إرشاد المستخدم لإعادة تشغيل السيرفر من لوحة Aternos."""
+"""Return instructions for manually restarting the Aternos server."""
 return {
 "success": False,
 "manual": True,
-"message": "افتح لوحة Aternos ونفّذ Restart.",
 "url": panel_url(),
+"message": "افتح لوحة Aternos واضغط Restart.",
 }
