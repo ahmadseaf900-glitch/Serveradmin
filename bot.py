@@ -247,6 +247,16 @@ def main_menu():
 @bot.message_handler(commands=["start"])
 def start_command(message):
 
+    telegram_id = message.from_user.id
+    username = message.from_user.username or "بدون username"
+    authorized = telegram_id in ADMIN_IDS
+
+    print(
+        f"[AUTH] /start | Telegram ID: {telegram_id} | "
+        f"Username: @{username} | Authorized: {'YES' if authorized else 'NO'}",
+        flush=True
+    )
+
     text = (
         "🤖 <b>Telegram → Discord → DiscordSRV</b>\n\n"
         "🟢 البوت يعمل. اختر العملية:"
