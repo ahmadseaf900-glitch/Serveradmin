@@ -1,4 +1,4 @@
 pyTelegramBotAPI
 requests
 mcstatus
-python-aternos
+py-aternos==3.0.74
