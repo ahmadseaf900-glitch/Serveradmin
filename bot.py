@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,34 +18,20 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 
 DISCORD_CHANNEL_ID = os.getenv(
     "DISCORD_CHANNEL_ID",
-    ""
+    os.getenv("DISCORD_CHANNELID", "")
 ).strip()
 
-# موجود في Render للتوافق مع إعداداتك.
-# لا يُستخدم لتحديد الأوامر المسموحة.
-CONSOLE_WHITELIST = os.getenv(
-    "CONSOLE_WHITELIST",
-    "say,whitelist,list,online,save-all"
-).strip()
+PORT = int(os.getenv("PORT", "10000"))
 
-PORT = int(
-    os.getenv("PORT", "10000")
-)
 
 if not BOT_TOKEN:
-    raise RuntimeError(
-        "BOT_TOKEN غير موجود في Environment Variables"
-    )
+    raise RuntimeError("BOT_TOKEN غير موجود")
 
 if not DISCORD_TOKEN:
-    raise RuntimeError(
-        "DISCORD_TOKEN غير موجود في Environment Variables"
-    )
+    raise RuntimeError("DISCORD_TOKEN غير موجود")
 
 if not DISCORD_CHANNEL_ID:
-    raise RuntimeError(
-        "DISCORD_CHANNEL_ID غير موجود في Environment Variables"
-    )
+    raise RuntimeError("DISCORD_CHANNEL_ID غير موجود")
 
 
 # ============================================================
@@ -61,7 +46,7 @@ bot = telebot.TeleBot(
 
 
 # ============================================================
-# DISCORD API
+# DISCORD
 # ============================================================
 
 DISCORD_API = "https://discord.com/api/v10"
@@ -71,19 +56,15 @@ def discord_headers():
     return {
         "Authorization": f"Bot {DISCORD_TOKEN}",
         "Content-Type": "application/json",
-        "User-Agent": "MinecraftTelegramManager/1.0"
+        "User-Agent": "Minecraft-Telegram-Bridge/1.0"
     }
 
 
-def send_discord_message(content):
-    """
-    إرسال رسالة حقيقية إلى قناة Discord.
-    """
+def send_discord_message(text):
+    text = str(text or "").strip()
 
-    if not content:
-        raise ValueError(
-            "رسالة Discord فارغة"
-        )
+    if not text:
+        raise ValueError("النص فارغ")
 
     url = (
         f"{DISCORD_API}/channels/"
@@ -93,71 +74,37 @@ def send_discord_message(content):
     response = requests.post(
         url,
         headers=discord_headers(),
-        json={
-            "content": content
-        },
+        json={"content": text},
         timeout=15
     )
 
     if response.status_code not in (200, 201):
         raise RuntimeError(
-            f"Discord API Error "
-            f"{response.status_code}: "
+            f"Discord HTTP {response.status_code}: "
             f"{response.text[:1000]}"
         )
 
     return response.json()
 
 
+# ============================================================
+# SEND CONSOLE COMMAND
+# ============================================================
+
 def send_console_command(command):
-    """
-    إرسال أمر Console إلى بوت Discord.
-
-    مهم:
-    بوت Discord الموجود عندك يجب أن يكون مبرمجًا
-    على اعتبار الرسائل التي تصل بهذه الصيغة أو
-    تنفيذها عبر DiscordSRV/Bridge.
-    """
-
-    command = str(
-        command or ""
-    ).strip()
+    command = str(command or "").strip()
 
     if not command:
-        raise ValueError(
-            "الأمر فارغ"
-        )
+        raise ValueError("الأمر فارغ")
 
-    # صيغة موحدة يستطيع بوت Discord عندك
-    # التقاطها وتحويلها إلى Minecraft Console.
-    content = f"!console {command}"
-
+    # الأمر الذي يفهمه بوت Discord/Bridge عندك
     return send_discord_message(
-        content
-    )
-
-
-def send_discord_bridge(command):
-    """
-    إرسال أمر للـ Discord Bridge.
-    """
-
-    command = str(
-        command or ""
-    ).strip()
-
-    if not command:
-        raise ValueError(
-            "الأمر فارغ"
-        )
-
-    return send_discord_message(
-        command
+        f"!console {command}"
     )
 
 
 # ============================================================
-# TELEGRAM KEYBOARD
+# MAIN KEYBOARD
 # ============================================================
 
 def main_keyboard():
@@ -169,8 +116,8 @@ def main_keyboard():
     markup.add(
 
         types.InlineKeyboardButton(
-            "🖥️ Console",
-            callback_data="console"
+            "📊 Status",
+            callback_data="status"
         ),
 
         types.InlineKeyboardButton(
@@ -182,26 +129,34 @@ def main_keyboard():
     markup.add(
 
         types.InlineKeyboardButton(
-            "🔐 Whitelist",
-            callback_data="whitelist"
+            "🖥️ Console",
+            callback_data="console"
         ),
 
         types.InlineKeyboardButton(
-            "📊 Status",
-            callback_data="status"
+            "🔐 Whitelist",
+            callback_data="whitelist"
         )
     )
 
     markup.add(
 
         types.InlineKeyboardButton(
-            "📢 Broadcast",
-            callback_data="broadcast"
+            "💬 Say",
+            callback_data="say"
         ),
 
         types.InlineKeyboardButton(
-            "💬 Say",
-            callback_data="say"
+            "📢 Broadcast",
+            callback_data="broadcast"
+        )
+    )
+
+    markup.add(
+
+        types.InlineKeyboardButton(
+            "🔄 Refresh",
+            callback_data="refresh"
         )
     )
 
@@ -209,7 +164,7 @@ def main_keyboard():
 
 
 # ============================================================
-# /START
+# START
 # ============================================================
 
 @bot.message_handler(
@@ -221,7 +176,8 @@ def start_command(message):
 
         message.chat.id,
 
-        "🤖 <b>بوت إدارة Minecraft عبر DiscordSRV</b>\n\n"
+        "🤖 <b>Minecraft Management Bot</b>\n\n"
+        "🔗 DiscordSRV / Discord Bridge\n\n"
         "اختر العملية:",
 
         reply_markup=main_keyboard()
@@ -229,7 +185,7 @@ def start_command(message):
 
 
 # ============================================================
-# /HELP
+# HELP
 # ============================================================
 
 @bot.message_handler(
@@ -242,10 +198,11 @@ def help_command(message):
         message.chat.id,
 
         "📚 <b>الأوامر</b>\n\n"
+
         "/start — لوحة التحكم\n"
-        "/console — Console\n"
+        "/status — حالة السيرفر\n"
         "/players — اللاعبين\n"
-        "/status — Status\n"
+        "/console — Console\n"
         "/whitelist — Whitelist\n"
         "/say — إرسال رسالة\n"
         "/broadcast — Broadcast"
@@ -253,33 +210,101 @@ def help_command(message):
 
 
 # ============================================================
-# /CONSOLE
+# STATUS
+# ============================================================
+
+@bot.message_handler(
+    commands=["status"]
+)
+def status_command(message):
+
+    try:
+
+        send_console_command(
+            "list"
+        )
+
+        bot.send_message(
+
+            message.chat.id,
+
+            "📊 <b>Status</b>\n\n"
+            "📤 تم إرسال طلب الحالة إلى Discord Bridge.\n\n"
+            "سيقوم Bridge بإرجاع النتيجة."
+        )
+
+    except Exception as exc:
+
+        bot.send_message(
+
+            message.chat.id,
+
+            "❌ فشل إرسال الطلب:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+# ============================================================
+# PLAYERS
+# ============================================================
+
+@bot.message_handler(
+    commands=["players"]
+)
+def players_command(message):
+
+    try:
+
+        send_console_command(
+            "list"
+        )
+
+        bot.send_message(
+
+            message.chat.id,
+
+            "👥 <b>Players</b>\n\n"
+            "📤 تم إرسال أمر <code>list</code> إلى Discord."
+        )
+
+    except Exception as exc:
+
+        bot.send_message(
+
+            message.chat.id,
+
+            "❌ فشل:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+# ============================================================
+# CONSOLE
 # ============================================================
 
 @bot.message_handler(
     commands=["console"]
 )
-def console_command_start(message):
+def console_start(message):
 
     msg = bot.send_message(
 
         message.chat.id,
 
         "🖥️ <b>Console</b>\n\n"
-        "أرسل أي أمر Minecraft تريد إرساله.\n\n"
-        "مثال:\n"
+        "أرسل أمر Minecraft الآن:\n\n"
         "<code>say Hello</code>\n"
-        "<code>gamemode creative Player</code>\n"
+        "<code>list</code>\n"
         "<code>time set day</code>"
     )
 
     bot.register_next_step_handler(
         msg,
-        console_command
+        console_execute
     )
 
 
-def console_command(message):
+def console_execute(message):
 
     command = (
         message.text or ""
@@ -306,7 +331,7 @@ def console_command(message):
 
             "🖥️ <b>Console</b>\n\n"
             f"📤 <code>{command}</code>\n\n"
-            "✅ تم إرسال الأمر إلى Discord."
+            "✅ تم إرسال الأمر إلى Discord Bridge."
         )
 
     except Exception as exc:
@@ -315,83 +340,13 @@ def console_command(message):
 
             message.chat.id,
 
-            "❌ <b>فشل إرسال الأمر</b>\n\n"
+            "❌ فشل:\n"
             f"<code>{str(exc)[:1000]}</code>"
         )
 
 
 # ============================================================
-# /PLAYERS
-# ============================================================
-
-@bot.message_handler(
-    commands=["players"]
-)
-def players_command(message):
-
-    try:
-
-        send_console_command(
-            "list"
-        )
-
-        bot.send_message(
-
-            message.chat.id,
-
-            "👥 <b>Players</b>\n\n"
-            "📤 تم إرسال <code>list</code> "
-            "إلى Discord Bridge.\n\n"
-            "سيقوم بوت Discord/DiscordSRV بإرسال نتيجة اللاعبين."
-        )
-
-    except Exception as exc:
-
-        bot.send_message(
-
-            message.chat.id,
-
-            "❌ فشل الطلب:\n"
-            f"<code>{str(exc)[:1000]}</code>"
-        )
-
-
-# ============================================================
-# /STATUS
-# ============================================================
-
-@bot.message_handler(
-    commands=["status"]
-)
-def status_command(message):
-
-    try:
-
-        send_console_command(
-            "list"
-        )
-
-        bot.send_message(
-
-            message.chat.id,
-
-            "📊 <b>Status</b>\n\n"
-            "📤 تم إرسال طلب الحالة إلى Discord Bridge."
-        )
-
-    except Exception as exc:
-
-        bot.send_message(
-
-            message.chat.id,
-
-            "❌ فشل طلب Status:\n"
-            f"<code>{str(exc)[:1000]}</code>"
-        )
-
-
-# ============================================================
-# /WHITELIST
+# WHITELIST
 # ============================================================
 
 @bot.message_handler(
@@ -406,12 +361,12 @@ def whitelist_command(message):
     markup.add(
 
         types.InlineKeyboardButton(
-            "➕ Add",
+            "➕ إضافة",
             callback_data="wl_add"
         ),
 
         types.InlineKeyboardButton(
-            "➖ Remove",
+            "➖ حذف",
             callback_data="wl_remove"
         )
     )
@@ -419,7 +374,7 @@ def whitelist_command(message):
     markup.add(
 
         types.InlineKeyboardButton(
-            "📋 List",
+            "📋 القائمة",
             callback_data="wl_list"
         )
     )
@@ -445,29 +400,26 @@ def whitelist_add_start(chat_id):
 
         chat_id,
 
-        "➕ أرسل اسم اللاعب لإضافته إلى Whitelist:"
+        "➕ أرسل اسم اللاعب:"
     )
 
     bot.register_next_step_handler(
         msg,
-        whitelist_add
+        whitelist_add_execute
     )
 
 
-def whitelist_add(message):
+def whitelist_add_execute(message):
 
     player = (
         message.text or ""
     ).strip()
 
-    if not re.fullmatch(
-        r"[A-Za-z0-9_]{1,16}",
-        player
-    ):
+    if not player:
 
         bot.send_message(
             message.chat.id,
-            "❌ اسم Minecraft غير صالح."
+            "❌ الاسم فارغ."
         )
 
         return
@@ -483,8 +435,8 @@ def whitelist_add(message):
             message.chat.id,
 
             "🔐 <b>Whitelist Add</b>\n\n"
-            f"👤 اللاعب: <code>{player}</code>\n"
-            "✅ تم إرسال الأمر إلى Discord."
+            f"👤 <code>{player}</code>\n"
+            "✅ تم إرسال الأمر."
         )
 
     except Exception as exc:
@@ -508,29 +460,26 @@ def whitelist_remove_start(chat_id):
 
         chat_id,
 
-        "➖ أرسل اسم اللاعب لحذفه من Whitelist:"
+        "➖ أرسل اسم اللاعب:"
     )
 
     bot.register_next_step_handler(
         msg,
-        whitelist_remove
+        whitelist_remove_execute
     )
 
 
-def whitelist_remove(message):
+def whitelist_remove_execute(message):
 
     player = (
         message.text or ""
     ).strip()
 
-    if not re.fullmatch(
-        r"[A-Za-z0-9_]{1,16}",
-        player
-    ):
+    if not player:
 
         bot.send_message(
             message.chat.id,
-            "❌ اسم Minecraft غير صالح."
+            "❌ الاسم فارغ."
         )
 
         return
@@ -546,8 +495,8 @@ def whitelist_remove(message):
             message.chat.id,
 
             "🔐 <b>Whitelist Remove</b>\n\n"
-            f"👤 اللاعب: <code>{player}</code>\n"
-            "✅ تم إرسال الأمر إلى Discord."
+            f"👤 <code>{player}</code>\n"
+            "✅ تم إرسال الأمر."
         )
 
     except Exception as exc:
@@ -562,25 +511,59 @@ def whitelist_remove(message):
 
 
 # ============================================================
+# WHITELIST LIST
+# ============================================================
+
+def whitelist_list(chat_id):
+
+    try:
+
+        send_console_command(
+            "whitelist list"
+        )
+
+        bot.send_message(
+
+            chat_id,
+
+            "📋 <b>Whitelist</b>\n\n"
+            "📤 تم إرسال <code>whitelist list</code>."
+        )
+
+    except Exception as exc:
+
+        bot.send_message(
+
+            chat_id,
+
+            "❌ فشل:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+# ============================================================
 # SAY
 # ============================================================
 
-def say_start(chat_id):
+@bot.message_handler(
+    commands=["say"]
+)
+def say_command(message):
 
     msg = bot.send_message(
 
-        chat_id,
+        message.chat.id,
 
-        "💬 أرسل الرسالة التي تريد إرسالها إلى Minecraft:"
+        "💬 أرسل الرسالة:"
     )
 
     bot.register_next_step_handler(
         msg,
-        say_message
+        say_execute
     )
 
 
-def say_message(message):
+def say_execute(message):
 
     text = (
         message.text or ""
@@ -600,8 +583,7 @@ def say_message(message):
             message.chat.id,
 
             "💬 <b>Say</b>\n\n"
-            f"📤 <code>{text}</code>\n\n"
-            "✅ تم الإرسال إلى Discord."
+            "✅ تم إرسال الرسالة."
         )
 
     except Exception as exc:
@@ -619,22 +601,25 @@ def say_message(message):
 # BROADCAST
 # ============================================================
 
-def broadcast_start(chat_id):
+@bot.message_handler(
+    commands=["broadcast"]
+)
+def broadcast_command(message):
 
     msg = bot.send_message(
 
-        chat_id,
+        message.chat.id,
 
-        "📢 أرسل رسالة الـBroadcast:"
+        "📢 أرسل رسالة Broadcast:"
     )
 
     bot.register_next_step_handler(
         msg,
-        broadcast_message
+        broadcast_execute
     )
 
 
-def broadcast_message(message):
+def broadcast_execute(message):
 
     text = (
         message.text or ""
@@ -654,7 +639,7 @@ def broadcast_message(message):
             message.chat.id,
 
             "📢 <b>Broadcast</b>\n\n"
-            "✅ تم إرسال الرسالة إلى Discord Bridge."
+            "✅ تم إرسال الرسالة."
         )
 
     except Exception as exc:
@@ -669,7 +654,7 @@ def broadcast_message(message):
 
 
 # ============================================================
-# CALLBACKS
+# CALLBACK HANDLER
 # ============================================================
 
 @bot.callback_query_handler(
@@ -687,11 +672,33 @@ def callback_handler(call):
         pass
 
 
-    if call.data == "console":
+    if call.data == "status":
 
-        console_command_start(
+        status_command(
             call.message
         )
+
+        return
+
+
+    if call.data == "refresh":
+
+        try:
+
+            bot.edit_message_reply_markup(
+                chat_id,
+                call.message.message_id,
+                reply_markup=main_keyboard()
+            )
+
+            bot.send_message(
+                chat_id,
+                "🔄 تم تحديث لوحة التحكم.",
+                reply_markup=main_keyboard()
+            )
+
+        except Exception:
+            pass
 
         return
 
@@ -705,9 +712,9 @@ def callback_handler(call):
         return
 
 
-    if call.data == "status":
+    if call.data == "console":
 
-        status_command(
+        console_start(
             call.message
         )
 
@@ -743,12 +750,163 @@ def callback_handler(call):
 
     if call.data == "wl_list":
 
-        send_console_command(
-            "whitelist list"
+        whitelist_list(
+            chat_id
         )
 
-        bot.send_message(
+        return
 
-            chat_id,
 
-            "📋 <b>
+    if call.data == "say":
+
+        say_command(
+            call.message
+        )
+
+        return
+
+
+    if call.data == "broadcast":
+
+        broadcast_command(
+            call.message
+        )
+
+        return
+
+
+# ============================================================
+# HEALTH SERVER
+# ============================================================
+
+class HealthHandler(
+    BaseHTTPRequestHandler
+):
+
+    def do_GET(self):
+
+        self.send_response(
+            200
+        )
+
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8"
+        )
+
+        self.end_headers()
+
+        self.wfile.write(
+            b"Telegram Discord Bridge is running."
+        )
+
+    def log_message(
+        self,
+        format,
+        *args
+    ):
+        return
+
+
+def run_health_server():
+
+    server = ThreadingHTTPServer(
+        (
+            "0.0.0.0",
+            PORT
+        ),
+        HealthHandler
+    )
+
+    print(
+        f"Health server listening on port {PORT}"
+    )
+
+    server.serve_forever()
+
+
+# ============================================================
+# BOT LOOP
+# ============================================================
+
+def run_bot():
+
+    while True:
+
+        try:
+
+            print(
+                "Telegram bot started."
+            )
+
+            bot.infinity_polling(
+                timeout=30,
+                long_polling_timeout=30,
+                skip_pending=True
+            )
+
+        except Exception as exc:
+
+            print(
+                f"Telegram error: {exc}"
+            )
+
+            time.sleep(5)
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    print(
+        "======================================"
+    )
+
+    print(
+        "Telegram → DiscordSRV Bridge"
+    )
+
+    print(
+        "Aternos: DISABLED"
+    )
+
+    print(
+        "Start: DISABLED"
+    )
+
+    print(
+        "Stop: DISABLED"
+    )
+
+    print(
+        "Restart: DISABLED"
+    )
+
+    print(
+        "Console: ENABLED"
+    )
+
+    print(
+        "Whitelist: ENABLED"
+    )
+
+    print(
+        "Players: ENABLED"
+    )
+
+    print(
+        "Discord Bridge: ENABLED"
+    )
+
+    print(
+        "======================================"
+    )
+
+    threading.Thread(
+        target=run_health_server,
+        daemon=True
+    ).start()
+
+    run_bot()
