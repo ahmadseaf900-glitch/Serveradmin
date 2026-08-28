@@ -2,7 +2,7 @@ import os
 import re
 import time
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import telebot
 from telebot import types
@@ -15,7 +15,6 @@ from mcstatus import JavaServer, BedrockServer
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-# السيرفر الافتراضي
 DEFAULT_SERVER_HOST = os.getenv(
     "MC_SERVER_HOST",
     "MACESMP37.aternos.me"
@@ -25,28 +24,25 @@ DEFAULT_SERVER_PORT = int(
     os.getenv("MC_SERVER_PORT", "25565")
 )
 
-# رابط لوحة Aternos - يستخدم فقط للفتح اليدوي عند الحاجة
 ATERNOS_URL = os.getenv(
     "ATERNOS_URL",
     "https://aternos.org/server/"
 ).strip()
 
-# اختياري: Discord
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
-DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID", "").strip()
-
-# Port الخاص بـ Render
 PORT = int(os.getenv("PORT", "10000"))
 
-# فحص الحالة
-STATUS_TIMEOUT = float(os.getenv("STATUS_TIMEOUT", "5"))
+STATUS_TIMEOUT = float(
+    os.getenv("STATUS_TIMEOUT", "5")
+)
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN غير موجود في Environment Variables")
+    raise RuntimeError(
+        "BOT_TOKEN غير موجود في Environment Variables"
+    )
 
 
 # ============================================================
-# BOT
+# TELEGRAM BOT
 # ============================================================
 
 bot = telebot.TeleBot(
@@ -57,7 +53,7 @@ bot = telebot.TeleBot(
 
 
 # ============================================================
-# SIMPLE STORAGE
+# SIMPLE MEMORY STORAGE
 # ============================================================
 
 user_servers = {}
@@ -65,13 +61,11 @@ user_lock = threading.Lock()
 
 
 # ============================================================
-# SERVER MODEL
+# SERVER STORAGE
 # ============================================================
 
 def get_user_server(chat_id):
-    """
-    يرجع السيرفر المحفوظ للمستخدم.
-    """
+    """إرجاع السيرفر المحفوظ للمستخدم."""
     with user_lock:
         return user_servers.get(
             chat_id,
@@ -79,13 +73,11 @@ def get_user_server(chat_id):
                 "host": DEFAULT_SERVER_HOST,
                 "port": DEFAULT_SERVER_PORT
             }
-        )
+        ).copy()
 
 
-def save_user_server(chat_id, host, port=25565):
-    """
-    يحفظ عنوان سيرفر للمستخدم.
-    """
+def save_user_server(chat_id, host, port):
+    """حفظ سيرفر للمستخدم."""
     with user_lock:
         user_servers[chat_id] = {
             "host": host,
@@ -94,14 +86,12 @@ def save_user_server(chat_id, host, port=25565):
 
 
 # ============================================================
-# SERVER ADDRESS PARSER
+# ADDRESS PARSER
 # ============================================================
 
 def clean_host(host):
-    """
-    تنظيف عنوان السيرفر من البروتوكولات والمسارات.
-    """
-    host = host.strip()
+    """تنظيف عنوان السيرفر."""
+    host = str(host or "").strip()
 
     host = re.sub(
         r"^https?://",
@@ -110,52 +100,56 @@ def clean_host(host):
         flags=re.IGNORECASE
     )
 
-    host = host.split("/")[0]
+    host = host.split("/")[0].strip()
 
-    return host.strip()
+    return host
 
 
 def parse_server_address(address):
     """
-    يحلل:
-        example.aternos.me
-        example.aternos.me:25565
-
-    ويعيد host, port.
+    تحليل:
+    example.com
+    example.com:25565
+    [IPv6]:25565
     """
 
     address = clean_host(address)
 
-    if ":" in address:
-        # IPv6
-        if address.startswith("["):
-            match = re.match(
-                r"^\[([^\]]+)\](?::(\d+))?$",
-                address
-            )
+    if not address:
+        raise ValueError("عنوان السيرفر فارغ")
 
-            if match:
-                host = match.group(1)
-                port = int(match.group(2) or 25565)
-                return host, port
+    # IPv6
+    if address.startswith("["):
+        match = re.match(
+            r"^\[([^\]]+)\](?::(\d+))?$",
+            address
+        )
 
-        # hostname:port
-        parts = address.rsplit(":", 1)
+        if match:
+            host = match.group(1)
+            port = int(match.group(2) or 25565)
+            return host, port
 
-        if len(parts) == 2 and parts[1].isdigit():
-            return parts[0], int(parts[1])
+    # hostname:port
+    parts = address.rsplit(":", 1)
+
+    if len(parts) == 2 and parts[1].isdigit():
+        port = int(parts[1])
+
+        if not 1 <= port <= 65535:
+            raise ValueError("المنفذ يجب أن يكون بين 1 و 65535")
+
+        return parts[0], port
 
     return address, 25565
 
 
 # ============================================================
-# REAL MINECRAFT STATUS
+# JAVA STATUS
 # ============================================================
 
 def get_java_status(host, port):
-    """
-    فحص Java Edition باستخدام Minecraft Server List Ping.
-    """
+    """فحص Java Edition."""
 
     server = JavaServer(
         host,
@@ -163,48 +157,50 @@ def get_java_status(host, port):
         timeout=STATUS_TIMEOUT
     )
 
-    status = server.status(
-        tries=2
-    )
+    result = server.status(tries=2)
 
-    version_name = "غير معروف"
-
-    try:
-        version_name = status.version.name or "غير معروف"
-    except Exception:
-        pass
-
-    online_players = 0
-    max_players = 0
+    players_online = 0
+    players_max = 0
+    version = "غير معروف"
 
     try:
-        online_players = status.players.online
+        players_online = int(result.players.online)
     except Exception:
         pass
 
     try:
-        max_players = status.players.max
+        players_max = int(result.players.max)
     except Exception:
         pass
 
-    latency = round(float(status.latency), 0)
+    try:
+        version = str(result.version.name or "غير معروف")
+    except Exception:
+        pass
+
+    try:
+        latency = round(float(result.latency))
+    except Exception:
+        latency = None
 
     return {
         "online": True,
         "edition": "Java",
         "host": host,
         "port": port,
-        "players": online_players,
-        "max_players": max_players,
+        "players": players_online,
+        "max_players": players_max,
         "latency": latency,
-        "version": version_name
+        "version": version
     }
 
 
+# ============================================================
+# BEDROCK STATUS
+# ============================================================
+
 def get_bedrock_status(host, port):
-    """
-    فحص Bedrock Edition.
-    """
+    """فحص Bedrock Edition."""
 
     server = BedrockServer(
         host,
@@ -212,50 +208,54 @@ def get_bedrock_status(host, port):
         timeout=STATUS_TIMEOUT
     )
 
-    status = server.status(
-        tries=2
-    )
+    result = server.status(tries=2)
 
-    version_name = "غير معروف"
-
-    try:
-        version_name = status.version.name or "غير معروف"
-    except Exception:
-        pass
-
-    online_players = 0
-    max_players = 0
+    players_online = 0
+    players_max = 0
+    version = "غير معروف"
 
     try:
-        online_players = status.players.online
+        players_online = int(result.players.online)
     except Exception:
         pass
 
     try:
-        max_players = status.players.max
+        players_max = int(result.players.max)
     except Exception:
         pass
 
-    latency = round(float(status.latency), 0)
+    try:
+        version = str(result.version.name or "غير معروف")
+    except Exception:
+        pass
+
+    try:
+        latency = round(float(result.latency))
+    except Exception:
+        latency = None
 
     return {
         "online": True,
         "edition": "Bedrock",
         "host": host,
         "port": port,
-        "players": online_players,
-        "max_players": max_players,
+        "players": players_online,
+        "max_players": players_max,
         "latency": latency,
-        "version": version_name
+        "version": version
     }
 
 
+# ============================================================
+# REAL STATUS
+# ============================================================
+
 def get_real_server_status(host, port=25565):
     """
-    يحاول Java أولًا ثم Bedrock.
+    فحص حقيقي للسيرفر.
 
-    لا يعتمد على MOTD لمعرفة Online/Offline.
-    إذا فشل الاتصال فعليًا يعيد Offline.
+    يجرب Java ثم Bedrock.
+    إذا لم يستجب أي منهما يعتبر السيرفر Offline.
     """
 
     host = clean_host(host)
@@ -271,7 +271,8 @@ def get_real_server_status(host, port=25565):
     except Exception as exc:
         java_error = exc
 
-    # إذا كان المستخدم يستخدم Bedrock
+    # Bedrock يستخدم غالبًا 19132.
+    # لكننا نجرب المنفذ المحدد أولًا.
     try:
         return get_bedrock_status(
             host,
@@ -280,6 +281,18 @@ def get_real_server_status(host, port=25565):
 
     except Exception:
         pass
+
+    # إذا كان المنفذ الافتراضي 25565،
+    # نجرب منفذ Bedrock الشائع.
+    if port == 25565:
+        try:
+            return get_bedrock_status(
+                host,
+                19132
+            )
+
+        except Exception:
+            pass
 
     return {
         "online": False,
@@ -290,7 +303,7 @@ def get_real_server_status(host, port=25565):
         "max_players": 0,
         "latency": None,
         "version": None,
-        "error": str(java_error) if java_error else "Server offline"
+        "error": str(java_error or "Server offline")
     }
 
 
@@ -299,37 +312,34 @@ def get_real_server_status(host, port=25565):
 # ============================================================
 
 def format_status(data):
-    """
-    تحويل بيانات السيرفر إلى رسالة Telegram.
-    """
+    """تحويل نتيجة الفحص إلى رسالة Telegram."""
 
     if not data["online"]:
         return (
             "🔴 <b>السيرفر Offline</b>\n\n"
-            f"🌐 العنوان: <code>{data['host']}</code>\n"
-            f"🔌 المنفذ: <code>{data['port']}</code>\n\n"
-            "📡 لم يستجب السيرفر لـ Minecraft Server List Ping."
+            f"🌐 العنوان:\n"
+            f"<code>{data['host']}:{data['port']}</code>\n\n"
+            "📡 لم يستجب السيرفر لطلب Minecraft Server List Ping."
         )
 
-    players = data["players"]
-    max_players = data["max_players"]
-
-    latency = data["latency"]
+    latency = data.get("latency")
 
     if latency is None:
-        ping_text = "غير معروف"
+        ping = "غير معروف"
     else:
-        ping_text = f"{latency}ms"
+        ping = f"{latency}ms"
 
-    version = data["version"] or "غير معروف"
+    version = data.get("version") or "غير معروف"
 
     return (
         "🟢 <b>السيرفر Online</b>\n\n"
-        f"👥 اللاعبين: <b>{players}/{max_players}</b>\n"
-        f"📶 Ping: <b>{ping_text}</b>\n"
+        f"👥 اللاعبين: "
+        f"<b>{data['players']}/{data['max_players']}</b>\n"
+        f"📶 Ping: <b>{ping}</b>\n"
         f"🎮 الإصدار: <b>{version}</b>\n"
         f"🧩 النوع: <b>{data['edition']}</b>\n"
-        f"🌐 العنوان: <code>{data['host']}:{data['port']}</code>"
+        f"🌐 العنوان:\n"
+        f"<code>{data['host']}:{data['port']}</code>"
     )
 
 
@@ -338,9 +348,7 @@ def format_status(data):
 # ============================================================
 
 def main_keyboard():
-    """
-    لوحة التحكم الرئيسية.
-    """
+    """لوحة التحكم."""
 
     markup = types.InlineKeyboardMarkup(row_width=2)
 
@@ -375,7 +383,7 @@ def main_keyboard():
 
     markup.add(
         types.InlineKeyboardButton(
-            "🌐 Aternos",
+            "🌐 فتح Aternos",
             url=ATERNOS_URL
         )
     )
@@ -389,9 +397,7 @@ def main_keyboard():
 
 @bot.message_handler(commands=["start"])
 def start_command(message):
-    """
-    الأمر الرئيسي للبوت.
-    """
+    """لوحة البداية."""
 
     server = get_user_server(
         message.chat.id
@@ -404,7 +410,8 @@ def start_command(message):
 
     text = (
         "🤖 <b>بوت إدارة سيرفر Minecraft</b>\n\n"
-        f"🌐 السيرفر: <code>{server['host']}</code>\n\n"
+        f"🌐 السيرفر:\n"
+        f"<code>{server['host']}:{server['port']}</code>\n\n"
         f"{format_status(status)}\n\n"
         "اختر العملية:"
     )
@@ -424,9 +431,7 @@ def start_command(message):
     commands=["status", "serverstatus"]
 )
 def status_command(message):
-    """
-    يعرض الحالة الحقيقية للسيرفر.
-    """
+    """عرض الحالة الحقيقية."""
 
     server = get_user_server(
         message.chat.id
@@ -464,13 +469,11 @@ def status_command(message):
 
 @bot.message_handler(commands=["server"])
 def server_command(message):
-    """
-    يعرض السيرفر الحالي ويطلب عنوانًا جديدًا.
-    """
+    """طلب عنوان سيرفر جديد."""
 
     bot.send_message(
         message.chat.id,
-        "📥 أرسل عنوان السيرفر.\n\n"
+        "📥 <b>أرسل عنوان السيرفر:</b>\n\n"
         "مثال:\n"
         "<code>MACESMP37.aternos.me</code>\n\n"
         "أو:\n"
@@ -484,17 +487,15 @@ def server_command(message):
 
 
 def receive_server_address(message):
-    """
-    يستقبل عنوان السيرفر ويحفظه.
-    """
+    """استقبال عنوان السيرفر."""
 
     try:
+        if not message.text:
+            raise ValueError("لم يتم إرسال عنوان")
+
         host, port = parse_server_address(
             message.text
         )
-
-        if not host:
-            raise ValueError("عنوان فارغ")
 
         save_user_server(
             message.chat.id,
@@ -506,7 +507,7 @@ def receive_server_address(message):
             message.chat.id,
             "✅ <b>تم حفظ السيرفر</b>\n\n"
             f"🌐 <code>{host}:{port}</code>\n\n"
-            "🔎 جاري التحقق من الحالة..."
+            "🔎 جاري فحص الحالة..."
         )
 
         status = get_real_server_status(
@@ -523,22 +524,20 @@ def receive_server_address(message):
     except Exception as exc:
         bot.send_message(
             message.chat.id,
-            "❌ فشل حفظ السيرفر.\n\n"
+            "❌ <b>فشل حفظ السيرفر</b>\n\n"
             f"<code>{str(exc)[:500]}</code>"
         )
 
 
 # ============================================================
-# CALLBACK HANDLER
+# CALLBACKS
 # ============================================================
 
 @bot.callback_query_handler(
     func=lambda call: True
 )
 def callback_handler(call):
-    """
-    معالجة أزرار Telegram.
-    """
+    """معالجة أزرار البوت."""
 
     chat_id = call.message.chat.id
 
@@ -554,29 +553,28 @@ def callback_handler(call):
     )
 
     # --------------------------------------------------------
-    # REAL STATUS
+    # STATUS
     # --------------------------------------------------------
 
     if call.data == "server_status":
 
-        try:
-            status = get_real_server_status(
-                server["host"],
-                server["port"]
-            )
+        status = get_real_server_status(
+            server["host"],
+            server["port"]
+        )
 
+        try:
+            bot.edit_message_text(
+                format_status(status),
+                chat_id,
+                call.message.message_id,
+                reply_markup=main_keyboard()
+            )
+        except Exception:
             bot.send_message(
                 chat_id,
                 format_status(status),
                 reply_markup=main_keyboard()
-            )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ فشل فحص الحالة:\n"
-                f"<code>{str(exc)[:500]}</code>"
             )
 
         return
@@ -587,14 +585,11 @@ def callback_handler(call):
 
     if call.data == "aternos_start":
 
-        # لا ندعي أن السيرفر اشتغل.
-        # Aternos لا يوفر Public API رسميًا لهذا التحكم.
-
         markup = types.InlineKeyboardMarkup()
 
         markup.add(
             types.InlineKeyboardButton(
-                "🌐 فتح لوحة Aternos",
+                "🌐 فتح Aternos",
                 url=ATERNOS_URL
             )
         )
@@ -602,11 +597,9 @@ def callback_handler(call):
         bot.send_message(
             chat_id,
             "▶️ <b>تشغيل السيرفر</b>\n\n"
-            "لا يوجد API رسمي من Aternos يسمح للبوت "
-            "بتنفيذ Start مباشرة.\n\n"
-            "لذلك لن أرسل لك رسالة كاذبة بأن السيرفر اشتغل.\n\n"
-            "بعد تشغيله، اضغط <b>📊 حالة السيرفر</b> "
-            "وسأتحقق منه مباشرة عبر Minecraft.",
+            "هذه النسخة لا تستخدم python-aternos "
+            "ولا تدّعي تنفيذ Start بدون API موثوق.\n\n"
+            "يمكنك فتح لوحة Aternos من الزر.",
             reply_markup=markup
         )
 
@@ -622,7 +615,7 @@ def callback_handler(call):
 
         markup.add(
             types.InlineKeyboardButton(
-                "🌐 فتح لوحة Aternos",
+                "🌐 فتح Aternos",
                 url=ATERNOS_URL
             )
         )
@@ -630,9 +623,8 @@ def callback_handler(call):
         bot.send_message(
             chat_id,
             "⏹️ <b>إيقاف السيرفر</b>\n\n"
-            "هذا الإصدار لا ينفذ Stop عبر API غير رسمي.\n\n"
-            "بعد الإيقاف يمكنك الضغط على "
-            "<b>📊 حالة السيرفر</b> للتأكد من أنه أصبح Offline.",
+            "هذه النسخة لا تنفذ Stop بشكل وهمي.\n"
+            "افتح لوحة Aternos إذا أردت إيقاف السيرفر.",
             reply_markup=markup
         )
 
@@ -648,7 +640,7 @@ def callback_handler(call):
 
         markup.add(
             types.InlineKeyboardButton(
-                "🌐 فتح لوحة Aternos",
+                "🌐 فتح Aternos",
                 url=ATERNOS_URL
             )
         )
@@ -656,9 +648,8 @@ def callback_handler(call):
         bot.send_message(
             chat_id,
             "🔄 <b>Restart</b>\n\n"
-            "لا يوجد API رسمي من Aternos لتنفيذ Restart "
-            "من خارج اللوحة.\n\n"
-            "لن أدعي أن العملية تمت وهي لم تتم.",
+            "هذه النسخة لا تدّعي تنفيذ Restart "
+            "بدون API موثوق.",
             reply_markup=markup
         )
 
@@ -671,9 +662,7 @@ def callback_handler(call):
 
 @bot.message_handler(commands=["ip"])
 def ip_command(message):
-    """
-    يعرض عنوان السيرفر.
-    """
+    """عرض IP السيرفر."""
 
     server = get_user_server(
         message.chat.id
@@ -692,9 +681,7 @@ def ip_command(message):
 
 @bot.message_handler(commands=["help"])
 def help_command(message):
-    """
-    قائمة أوامر البوت.
-    """
+    """عرض الأوامر."""
 
     bot.send_message(
         message.chat.id,
@@ -708,7 +695,7 @@ def help_command(message):
 
 
 # ============================================================
-# UNKNOWN TEXT
+# TEXT HANDLER
 # ============================================================
 
 @bot.message_handler(
@@ -716,17 +703,24 @@ def help_command(message):
     content_types=["text"]
 )
 def text_handler(message):
-    """
-    معالجة الرسائل النصية العامة.
-    """
+    """معالجة الرسائل النصية."""
 
     text = message.text.strip().lower()
 
-    if text in ["status", "الحالة", "حالة السيرفر"]:
+    if text in [
+        "status",
+        "الحالة",
+        "حالة السيرفر"
+    ]:
         status_command(message)
         return
 
-    if text in ["ip", "الاى بي", "الاي بي"]:
+    if text in [
+        "ip",
+        "الاي بي",
+        "الاى بي",
+        "الآي بي"
+    ]:
         ip_command(message)
         return
 
@@ -737,13 +731,11 @@ def text_handler(message):
 
 
 # ============================================================
-# HEALTH SERVER FOR RENDER
+# RENDER HEALTH SERVER
 # ============================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
-    """
-    HTTP endpoint بسيط حتى يبقى Web Service صحيًا على Render.
-    """
+    """HTTP Health Check لـRender."""
 
     def do_GET(self):
         self.send_response(200)
@@ -764,13 +756,15 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def run_health_server():
-    """
-    تشغيل HTTP server على PORT الخاص بـRender.
-    """
+    """تشغيل HTTP server."""
 
-    server = HTTPServer(
+    server = ThreadingHTTPServer(
         ("0.0.0.0", PORT),
         HealthHandler
+    )
+
+    print(
+        f"Health server listening on port {PORT}"
     )
 
     server.serve_forever()
@@ -781,9 +775,7 @@ def run_health_server():
 # ============================================================
 
 def run_bot():
-    """
-    تشغيل Telegram polling مع إعادة المحاولة عند انقطاع الاتصال.
-    """
+    """تشغيل Telegram polling."""
 
     while True:
 
@@ -812,32 +804,16 @@ def run_bot():
 
 if __name__ == "__main__":
 
-    print(
-        "========================================"
-    )
-
-    print(
-        "Minecraft Telegram Bot"
-    )
-
+    print("========================================")
+    print("Minecraft Telegram Bot")
     print(
         f"Default server: "
         f"{DEFAULT_SERVER_HOST}:{DEFAULT_SERVER_PORT}"
     )
+    print("python-aternos: DISABLED")
+    print("Real Minecraft status: ENABLED")
+    print("========================================")
 
-    print(
-        "python-aternos: DISABLED"
-    )
-
-    print(
-        "Real Minecraft status: ENABLED"
-    )
-
-    print(
-        "========================================"
-    )
-
-    # Web health server
     health_thread = threading.Thread(
         target=run_health_server,
         daemon=True
@@ -845,5 +821,4 @@ if __name__ == "__main__":
 
     health_thread.start()
 
-    # Telegram
     run_bot()
