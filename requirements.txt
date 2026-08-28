@@ -1,5 +1,2 @@
 pyTelegramBotAPI
-mcstatus
-python-aternos==3.0.5
-lxml
-requests
+python-aternos
