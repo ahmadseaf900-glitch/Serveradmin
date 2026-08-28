@@ -2,50 +2,45 @@ import os
 import re
 import time
 import threading
-
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import telebot
 from telebot import types
-
 from mcstatus import JavaServer, BedrockServer
 
 import aternos
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-MC_SERVER_HOST = os.getenv(
-    "MC_SERVER_HOST",
-    "MACESMP37.aternos.me"
-).strip()
-
-MC_SERVER_PORT = int(
-    os.getenv("MC_SERVER_PORT", "25565")
+PORT = int(
+    os.getenv("PORT", "10000")
 )
 
 STATUS_TIMEOUT = float(
     os.getenv("STATUS_TIMEOUT", "5")
 )
 
-PORT = int(
-    os.getenv("PORT", "10000")
-)
+ATERNOS_URL = os.getenv(
+    "ATERNOS_URL",
+    "https://aternos.org/server/"
+).strip()
+
+CONSOLE_WHITELIST = {
+    x.strip()
+    for x in os.getenv(
+        "CONSOLE_WHITELIST",
+        ""
+    ).split(",")
+    if x.strip()
+}
 
 
 if not BOT_TOKEN:
     raise RuntimeError(
-        "BOT_TOKEN غير موجود في Render"
+        "BOT_TOKEN غير موجود."
     )
 
-
-# ============================================================
-# TELEGRAM
-# ============================================================
 
 bot = telebot.TeleBot(
     BOT_TOKEN,
@@ -54,42 +49,7 @@ bot = telebot.TeleBot(
 )
 
 
-# ============================================================
-# SERVER STORAGE
-# ============================================================
-
-user_servers = {}
-
-server_lock = threading.Lock()
-
-
-def get_user_server(chat_id):
-
-    with server_lock:
-        return user_servers.get(
-            chat_id,
-            {
-                "host": MC_SERVER_HOST,
-                "port": MC_SERVER_PORT
-            }
-        ).copy()
-
-
-def save_user_server(chat_id, host, port):
-
-    with server_lock:
-        user_servers[chat_id] = {
-            "host": host,
-            "port": int(port)
-        }
-
-
-# ============================================================
-# ADDRESS
-# ============================================================
-
 def clean_host(host):
-
     host = str(host or "").strip()
 
     host = re.sub(
@@ -99,404 +59,243 @@ def clean_host(host):
         flags=re.IGNORECASE
     )
 
-    host = host.split("/")[0]
-
-    return host.strip()
+    return host.split("/")[0].strip()
 
 
-def parse_address(address):
-
-    address = clean_host(address)
-
-    if not address:
-        raise ValueError(
-            "عنوان السيرفر فارغ"
-        )
-
-    if address.startswith("["):
-
-        match = re.match(
-            r"^\[([^\]]+)\](?::(\d+))?$",
-            address
-        )
-
-        if match:
-
-            host = match.group(1)
-
-            port = int(
-                match.group(2) or 25565
-            )
-
-            return host, port
-
-    parts = address.rsplit(":", 1)
-
-    if len(parts) == 2:
-
-        if parts[1].isdigit():
-
-            port = int(parts[1])
-
-            if not 1 <= port <= 65535:
-                raise ValueError(
-                    "Port غير صحيح"
-                )
-
-            return parts[0], port
-
-    return address, 25565
-
-
-# ============================================================
-# JAVA STATUS
-# ============================================================
-
-def java_status(host, port):
-
-    server = JavaServer(
-        host,
-        port,
-        timeout=STATUS_TIMEOUT
-    )
-
-    result = server.status(
-        tries=2
-    )
-
-    try:
-        players = int(
-            result.players.online
-        )
-    except Exception:
-        players = 0
-
-    try:
-        maximum = int(
-            result.players.max
-        )
-    except Exception:
-        maximum = 0
-
-    try:
-        version = str(
-            result.version.name
-        )
-    except Exception:
-        version = "غير معروف"
-
-    try:
-        ping = round(
-            float(result.latency)
-        )
-    except Exception:
-        ping = None
-
-    return {
-        "online": True,
-        "edition": "Java",
-        "host": host,
-        "port": port,
-        "players": players,
-        "max_players": maximum,
-        "version": version,
-        "ping": ping
-    }
-
-
-# ============================================================
-# BEDROCK STATUS
-# ============================================================
-
-def bedrock_status(host, port):
-
-    server = BedrockServer(
-        host,
-        port,
-        timeout=STATUS_TIMEOUT
-    )
-
-    result = server.status(
-        tries=2
-    )
-
-    try:
-        players = int(
-            result.players.online
-        )
-    except Exception:
-        players = 0
-
-    try:
-        maximum = int(
-            result.players.max
-        )
-    except Exception:
-        maximum = 0
-
-    try:
-        version = str(
-            result.version.name
-        )
-    except Exception:
-        version = "غير معروف"
-
-    try:
-        ping = round(
-            float(result.latency)
-        )
-    except Exception:
-        ping = None
-
-    return {
-        "online": True,
-        "edition": "Bedrock",
-        "host": host,
-        "port": port,
-        "players": players,
-        "max_players": maximum,
-        "version": version,
-        "ping": ping
-    }
-
-
-# ============================================================
-# REAL STATUS
-# ============================================================
-
-def get_real_status(host, port):
-
+def mc_status(host, port):
     host = clean_host(host)
 
     try:
-        return java_status(
+        server = JavaServer(
             host,
-            port
+            port,
+            timeout=STATUS_TIMEOUT
         )
+
+        data = server.status(tries=2)
+
+        return {
+            "online": True,
+            "edition": "Java",
+            "players": data.players.online,
+            "max": data.players.max,
+            "ping": round(data.latency),
+            "version": str(data.version.name),
+            "host": host,
+            "port": port,
+        }
+
     except Exception:
         pass
 
     try:
-        return bedrock_status(
+        server = BedrockServer(
             host,
-            port
+            port,
+            timeout=STATUS_TIMEOUT
         )
+
+        data = server.status(tries=2)
+
+        return {
+            "online": True,
+            "edition": "Bedrock",
+            "players": data.players.online,
+            "max": data.players.max,
+            "ping": round(data.latency),
+            "version": str(data.version.name),
+            "host": host,
+            "port": port,
+        }
+
     except Exception:
         pass
-
-    if port == 25565:
-
-        try:
-            return bedrock_status(
-                host,
-                19132
-            )
-        except Exception:
-            pass
 
     return {
         "online": False,
         "edition": "Unknown",
+        "players": 0,
+        "max": 0,
+        "ping": None,
+        "version": None,
         "host": host,
         "port": port,
-        "players": 0,
-        "max_players": 0,
-        "version": None,
-        "ping": None
     }
 
 
-# ============================================================
-# STATUS FORMAT
-# ============================================================
+def get_mc_address():
+    info = aternos.server_info()
 
-def format_status(data):
+    address = str(
+        info.get(
+            "address",
+            os.getenv(
+                "MC_SERVER_HOST",
+                "MACESMP37.aternos.me"
+            )
+        )
+    )
+
+    if ":" in address:
+        parts = address.rsplit(":", 1)
+
+        if parts[1].isdigit():
+            return parts[0], int(parts[1])
+
+    return address, 25565
+
+
+def status_text():
+    host, port = get_mc_address()
+
+    data = mc_status(
+        host,
+        port
+    )
 
     if not data["online"]:
-
         return (
             "🔴 <b>السيرفر Offline</b>\n\n"
             f"🌐 العنوان:\n"
-            f"<code>{data['host']}:{data['port']}</code>\n\n"
-            "📡 السيرفر لا يستجيب حاليًا."
+            f"<code>{host}:{port}</code>"
         )
-
-    ping = data["ping"]
-
-    if ping is None:
-        ping_text = "غير معروف"
-    else:
-        ping_text = f"{ping}ms"
 
     return (
         "🟢 <b>السيرفر Online</b>\n\n"
         f"👥 اللاعبين: "
-        f"<b>{data['players']}/{data['max_players']}</b>\n"
-        f"📶 Ping: <b>{ping_text}</b>\n"
+        f"<b>{data['players']}/{data['max']}</b>\n"
+        f"📶 Ping: <b>{data['ping']}ms</b>\n"
         f"🎮 الإصدار: <b>{data['version']}</b>\n"
         f"🧩 النوع: <b>{data['edition']}</b>\n"
         f"🌐 العنوان:\n"
-        f"<code>{data['host']}:{data['port']}</code>"
+        f"<code>{host}:{port}</code>"
     )
 
 
-# ============================================================
-# KEYBOARD
-# ============================================================
+def keyboard():
+    k = types.InlineKeyboardMarkup(row_width=2)
 
-def main_keyboard():
-
-    markup = types.InlineKeyboardMarkup(
-        row_width=2
-    )
-
-    markup.add(
-
+    k.add(
         types.InlineKeyboardButton(
             "▶️ Start",
-            callback_data="aternos_start"
+            callback_data="start"
         ),
-
         types.InlineKeyboardButton(
             "⏹️ Stop",
-            callback_data="aternos_stop"
+            callback_data="stop"
         )
     )
 
-    markup.add(
-
+    k.add(
         types.InlineKeyboardButton(
             "🔄 Restart",
-            callback_data="aternos_restart"
+            callback_data="restart"
         ),
-
         types.InlineKeyboardButton(
             "📊 Status",
-            callback_data="server_status"
+            callback_data="status"
         )
     )
 
-    markup.add(
-
+    k.add(
         types.InlineKeyboardButton(
             "🖥️ Console",
             callback_data="console"
         ),
-
         types.InlineKeyboardButton(
             "👥 Players",
             callback_data="players"
         )
     )
 
-    markup.add(
-
+    k.add(
         types.InlineKeyboardButton(
-            "📝 Whitelist",
+            "✅ Whitelist",
             callback_data="whitelist"
+        ),
+        types.InlineKeyboardButton(
+            "👑 OP",
+            callback_data="op"
         )
     )
 
-    return markup
+    k.add(
+        types.InlineKeyboardButton(
+            "🌐 Aternos",
+            url=ATERNOS_URL
+        )
+    )
+
+    return k
 
 
-# ============================================================
-# /START
-# ============================================================
-
-@bot.message_handler(
-    commands=["start"]
-)
+@bot.message_handler(commands=["start"])
 def start_command(message):
+    try:
+        text = (
+            "🤖 <b>بوت إدارة Minecraft</b>\n\n"
+            f"{status_text()}\n\n"
+            "اختر العملية:"
+        )
 
-    server = get_user_server(
-        message.chat.id
-    )
-
-    status = get_real_status(
-        server["host"],
-        server["port"]
-    )
+    except Exception as exc:
+        text = (
+            "🤖 <b>بوت إدارة Minecraft</b>\n\n"
+            "⚠️ تعذر قراءة حالة Aternos:\n"
+            f"<code>{str(exc)[:500]}</code>"
+        )
 
     bot.send_message(
-
         message.chat.id,
-
-        "🤖 <b>بوت إدارة سيرفر Minecraft</b>\n\n"
-
-        f"{format_status(status)}\n\n"
-
-        "اختر العملية:",
-
-        reply_markup=main_keyboard()
+        text,
+        reply_markup=keyboard()
     )
-
-
-# ============================================================
-# STATUS
-# ============================================================
-
-def send_status(chat_id):
-
-    server = get_user_server(
-        chat_id
-    )
-
-    msg = bot.send_message(
-        chat_id,
-        "🔎 <b>جاري فحص السيرفر...</b>"
-    )
-
-    status = get_real_status(
-        server["host"],
-        server["port"]
-    )
-
-    try:
-
-        bot.edit_message_text(
-
-            format_status(status),
-
-            chat_id,
-
-            msg.message_id,
-
-            reply_markup=main_keyboard()
-        )
-
-    except Exception:
-
-        bot.send_message(
-
-            chat_id,
-
-            format_status(status),
-
-            reply_markup=main_keyboard()
-        )
 
 
 @bot.message_handler(
     commands=["status"]
 )
 def status_command(message):
+    try:
+        bot.send_message(
+            message.chat.id,
+            status_text(),
+            reply_markup=keyboard()
+        )
+    except Exception as exc:
+        bot.send_message(
+            message.chat.id,
+            "❌ خطأ:\n"
+            f"<code>{str(exc)[:500]}</code>"
+        )
 
-    send_status(
-        message.chat.id
-    )
 
+def execute_aternos(action):
+    try:
+        if action == "start":
+            return aternos.start()
 
-# ============================================================
-# CALLBACK
-# ============================================================
+        if action == "stop":
+            return aternos.stop()
+
+        if action == "restart":
+            return aternos.restart()
+
+        raise ValueError("عملية غير معروفة.")
+
+    except Exception as exc:
+        return {
+            "success": False,
+            "message": str(exc)
+        }
+
 
 @bot.callback_query_handler(
     func=lambda call: True
 )
 def callback_handler(call):
-
     chat_id = call.message.chat.id
+    action = call.data
 
     try:
         bot.answer_callback_query(
@@ -505,439 +304,332 @@ def callback_handler(call):
     except Exception:
         pass
 
+    if action in (
+        "start",
+        "stop",
+        "restart"
+    ):
+        msg = bot.send_message(
+            chat_id,
+            "⏳ <b>جاري تنفيذ العملية...</b>"
+        )
 
-    # ========================================================
-    # STATUS
-    # ========================================================
+        result = execute_aternos(action)
 
-    if call.data == "server_status":
+        if result.get("success"):
+            if action == "start":
+                title = "▶️ <b>Start</b>"
 
-        send_status(
-            chat_id
+            elif action == "stop":
+                title = "⏹️ <b>Stop</b>"
+
+            else:
+                title = "🔄 <b>Restart</b>"
+
+            text = (
+                f"{title}\n\n"
+                f"✅ {result.get('message', 'تم التنفيذ.')}"
+            )
+
+        else:
+            text = (
+                "❌ <b>فشلت العملية</b>\n\n"
+                f"<code>{result.get('message', 'خطأ غير معروف')[:1000]}</code>"
+            )
+
+        try:
+            bot.edit_message_text(
+                text,
+                chat_id,
+                msg.message_id,
+                reply_markup=keyboard()
+            )
+        except Exception:
+            bot.send_message(
+                chat_id,
+                text,
+                reply_markup=keyboard()
+            )
+
+        return
+
+    if action == "status":
+        try:
+            text = status_text()
+        except Exception as exc:
+            text = (
+                "❌ فشل فحص الحالة:\n"
+                f"<code>{str(exc)[:500]}</code>"
+            )
+
+        bot.send_message(
+            chat_id,
+            text,
+            reply_markup=keyboard()
         )
 
         return
 
-
-    # ========================================================
-    # START
-    # ========================================================
-
-    if call.data == "aternos_start":
-
-        bot.send_message(
-            chat_id,
-            "▶️ <b>جاري تشغيل السيرفر...</b>"
-        )
-
+    if action == "players":
         try:
+            players = aternos.get_players()
 
-            result = aternos.start()
-
-            if result.get("success"):
-
-                bot.send_message(
-                    chat_id,
-                    "✅ <b>تم إرسال أمر Start إلى Aternos.</b>\n\n"
-                    "⏳ انتظر قليلًا ثم اضغط Status.",
-                    reply_markup=main_keyboard()
-                )
+            if not players:
+                text = "👥 <b>Players</b>\n\nلا يوجد لاعبون متصلون."
 
             else:
+                lines = "\n".join(
+                    f"• <code>{p}</code>"
+                    for p in players
+                )
 
-                raise RuntimeError(
-                    str(result)
+                text = (
+                    "👥 <b>اللاعبون المتصلون</b>\n\n"
+                    f"{lines}"
                 )
 
         except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ <b>فشل تشغيل السيرفر</b>\n\n"
-                f"<code>{str(exc)[:2000]}</code>",
-                reply_markup=main_keyboard()
+            text = (
+                "❌ فشل جلب اللاعبين:\n"
+                f"<code>{str(exc)[:500]}</code>"
             )
-
-        return
-
-
-    # ========================================================
-    # STOP
-    # ========================================================
-
-    if call.data == "aternos_stop":
 
         bot.send_message(
             chat_id,
-            "⏹️ <b>جاري إيقاف السيرفر...</b>"
-        )
-
-        try:
-
-            result = aternos.stop()
-
-            if result.get("success"):
-
-                bot.send_message(
-                    chat_id,
-                    "✅ <b>تم إرسال أمر Stop إلى Aternos.</b>\n\n"
-                    "اضغط Status للتحقق.",
-                    reply_markup=main_keyboard()
-                )
-
-            else:
-
-                raise RuntimeError(
-                    str(result)
-                )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ <b>فشل إيقاف السيرفر</b>\n\n"
-                f"<code>{str(exc)[:2000]}</code>",
-                reply_markup=main_keyboard()
-            )
-
-        return
-
-
-    # ========================================================
-    # RESTART
-    # ========================================================
-
-    if call.data == "aternos_restart":
-
-        bot.send_message(
-            chat_id,
-            "🔄 <b>جاري Restart...</b>"
-        )
-
-        try:
-
-            result = aternos.restart()
-
-            if result.get("success"):
-
-                bot.send_message(
-                    chat_id,
-                    "✅ <b>تم إرسال أمر Restart إلى Aternos.</b>\n\n"
-                    "اضغط Status للتحقق.",
-                    reply_markup=main_keyboard()
-                )
-
-            else:
-
-                raise RuntimeError(
-                    str(result)
-                )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ <b>فشل Restart</b>\n\n"
-                f"<code>{str(exc)[:2000]}</code>",
-                reply_markup=main_keyboard()
-            )
-
-        return
-
-
-    # ========================================================
-    # PLAYERS
-    # ========================================================
-
-    if call.data == "players":
-
-        server = get_user_server(
-            chat_id
-        )
-
-        status = get_real_status(
-            server["host"],
-            server["port"]
-        )
-
-        if not status["online"]:
-
-            bot.send_message(
-                chat_id,
-                "🔴 السيرفر Offline.\n"
-                "لا يمكن جلب اللاعبين الآن.",
-                reply_markup=main_keyboard()
-            )
-
-            return
-
-        bot.send_message(
-            chat_id,
-
-            "👥 <b>اللاعبون</b>\n\n"
-            f"عدد اللاعبين: "
-            f"<b>{status['players']}/{status['max_players']}</b>\n\n"
-            "ℹ️ أسماء اللاعبين تحتاج نظام Player List إضافي.",
-            
-            reply_markup=main_keyboard()
+            text,
+            reply_markup=keyboard()
         )
 
         return
 
-
-    # ========================================================
-    # CONSOLE
-    # ========================================================
-
-    if call.data == "console":
+    if action == "whitelist":
+        text = (
+            "✅ <b>Whitelist</b>\n\n"
+            "اختر العملية:\n\n"
+            "/whitelist — عرض القائمة\n"
+            "/wladd Player — إضافة\n"
+            "/wlremove Player — حذف"
+        )
 
         bot.send_message(
-
             chat_id,
+            text,
+            reply_markup=keyboard()
+        )
 
+        return
+
+    if action == "op":
+        text = (
+            "👑 <b>OP</b>\n\n"
+            "/op Player — إعطاء OP\n"
+            "/deop Player — إزالة OP"
+        )
+
+        bot.send_message(
+            chat_id,
+            text,
+            reply_markup=keyboard()
+        )
+
+        return
+
+    if action == "console":
+        bot.send_message(
+            chat_id,
             "🖥️ <b>Console</b>\n\n"
-
-            "الـ Console عندك مرتبط بنظام DiscordSRV "
-            "وبوت Discord.\n\n"
-
-            "يمكن إبقاء هذه الواجهة من Telegram "
-            "مربوطة مع قناة Discord الخاصة بالكونسول.",
-
-            reply_markup=main_keyboard()
+            "أرسل الأمر بهذا الشكل:\n"
+            "<code>/console say Hello</code>\n\n"
+            "يجب أن يكون حساب Telegram موجودًا في "
+            "<code>CONSOLE_WHITELIST</code>."
         )
 
         return
 
 
-    # ========================================================
-    # WHITELIST
-    # ========================================================
+@bot.message_handler(commands=["whitelist"])
+def whitelist_command(message):
+    try:
+        players = aternos.whitelist_list()
 
-    if call.data == "whitelist":
-
-        markup = types.InlineKeyboardMarkup(
-            row_width=2
-        )
-
-        markup.add(
-
-            types.InlineKeyboardButton(
-                "➕ Add",
-                callback_data="whitelist_add"
-            ),
-
-            types.InlineKeyboardButton(
-                "➖ Remove",
-                callback_data="whitelist_remove"
+        if not players:
+            text = (
+                "✅ <b>Whitelist</b>\n\n"
+                "القائمة فارغة."
             )
-        )
-
-        markup.add(
-
-            types.InlineKeyboardButton(
-                "📋 List",
-                callback_data="whitelist_list"
+        else:
+            text = (
+                "✅ <b>Whitelist</b>\n\n"
+                + "\n".join(
+                    f"• <code>{p}</code>"
+                    for p in players
+                )
             )
+
+    except Exception as exc:
+        text = (
+            "❌ فشل قراءة Whitelist:\n"
+            f"<code>{str(exc)[:1000]}</code>"
         )
 
-        markup.add(
-
-            types.InlineKeyboardButton(
-                "🔙 رجوع",
-                callback_data="back_main"
-            )
-        )
-
-        bot.send_message(
-            chat_id,
-            "📝 <b>Whitelist</b>\n\n"
-            "اختر العملية:",
-            reply_markup=markup
-        )
-
-        return
-
-
-    # ========================================================
-    # BACK
-    # ========================================================
-
-    if call.data == "back_main":
-
-        bot.send_message(
-            chat_id,
-            "🎮 <b>لوحة التحكم</b>",
-            reply_markup=main_keyboard()
-        )
-
-        return
-
-
-    # ========================================================
-    # WHITELIST ACTIONS
-    # ========================================================
-
-    if call.data == "whitelist_add":
-
-        bot.send_message(
-            chat_id,
-            "➕ أرسل اسم اللاعب لإضافته إلى Whitelist.\n\n"
-            "مثال:\n"
-            "<code>/whitelist_add Steve</code>"
-        )
-
-        return
-
-
-    if call.data == "whitelist_remove":
-
-        bot.send_message(
-            chat_id,
-            "➖ أرسل اسم اللاعب لإزالته.\n\n"
-            "مثال:\n"
-            "<code>/whitelist_remove Steve</code>"
-        )
-
-        return
-
-
-    if call.data == "whitelist_list":
-
-        bot.send_message(
-            chat_id,
-            "📋 <b>Whitelist</b>\n\n"
-            "سيتم جلب القائمة من نظام DiscordSRV/Console "
-            "الموجود عندك.",
-            reply_markup=main_keyboard()
-        )
-
-        return
-
-
-# ============================================================
-# WHITELIST COMMANDS
-# ============================================================
-
-@bot.message_handler(
-    commands=["whitelist_add"]
-)
-def whitelist_add(message):
-
-    parts = message.text.split(
-        maxsplit=1
+    bot.send_message(
+        message.chat.id,
+        text,
+        reply_markup=keyboard()
     )
 
-    if len(parts) < 2:
 
-        bot.send_message(
-            message.chat.id,
-            "❌ استخدم:\n"
-            "<code>/whitelist_add PlayerName</code>"
+@bot.message_handler(commands=["wladd"])
+def whitelist_add_command(message):
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        bot.reply_to(
+            message,
+            "استخدم:\n<code>/wladd Player</code>"
         )
-
         return
 
     player = parts[1].strip()
 
-    bot.send_message(
-        message.chat.id,
-        "📝 سيتم إرسال أمر Whitelist للاعب:\n"
-        f"<code>{player}</code>\n\n"
-        "اربط هذه العملية مع Console/DiscordSRV لديك."
-    )
+    try:
+        aternos.whitelist_add(player)
 
-
-@bot.message_handler(
-    commands=["whitelist_remove"]
-)
-def whitelist_remove(message):
-
-    parts = message.text.split(
-        maxsplit=1
-    )
-
-    if len(parts) < 2:
-
-        bot.send_message(
-            message.chat.id,
-            "❌ استخدم:\n"
-            "<code>/whitelist_remove PlayerName</code>"
+        bot.reply_to(
+            message,
+            f"✅ تم إضافة <code>{player}</code> إلى Whitelist."
         )
 
+    except Exception as exc:
+        bot.reply_to(
+            message,
+            "❌ فشل الإضافة:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+@bot.message_handler(commands=["wlremove"])
+def whitelist_remove_command(message):
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        bot.reply_to(
+            message,
+            "استخدم:\n<code>/wlremove Player</code>"
+        )
         return
 
     player = parts[1].strip()
 
-    bot.send_message(
-        message.chat.id,
-        "📝 سيتم إرسال أمر إزالة Whitelist للاعب:\n"
-        f"<code>{player}</code>\n\n"
-        "اربط هذه العملية مع Console/DiscordSRV لديك."
+    try:
+        aternos.whitelist_remove(player)
+
+        bot.reply_to(
+            message,
+            f"✅ تم حذف <code>{player}</code> من Whitelist."
+        )
+
+    except Exception as exc:
+        bot.reply_to(
+            message,
+            "❌ فشل الحذف:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+@bot.message_handler(commands=["op"])
+def op_command(message):
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        bot.reply_to(
+            message,
+            "استخدم:\n<code>/op Player</code>"
+        )
+        return
+
+    player = parts[1].strip()
+
+    try:
+        aternos.op_add(player)
+
+        bot.reply_to(
+            message,
+            f"👑 تم إعطاء OP للاعب <code>{player}</code>."
+        )
+
+    except Exception as exc:
+        bot.reply_to(
+            message,
+            "❌ فشل OP:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+@bot.message_handler(commands=["deop"])
+def deop_command(message):
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        bot.reply_to(
+            message,
+            "استخدم:\n<code>/deop Player</code>"
+        )
+        return
+
+    player = parts[1].strip()
+
+    try:
+        aternos.op_remove(player)
+
+        bot.reply_to(
+            message,
+            f"🚫 تم إزالة OP من <code>{player}</code>."
+        )
+
+    except Exception as exc:
+        bot.reply_to(
+            message,
+            "❌ فشل DeOP:\n"
+            f"<code>{str(exc)[:1000]}</code>"
+        )
+
+
+@bot.message_handler(commands=["console"])
+def console_command(message):
+    user_id = str(message.from_user.id)
+
+    if CONSOLE_WHITELIST and user_id not in CONSOLE_WHITELIST:
+        bot.reply_to(
+            message,
+            "⛔ ليس لديك صلاحية استخدام Console."
+        )
+        return
+
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) != 2:
+        bot.reply_to(
+            message,
+            "استخدم:\n"
+            "<code>/console say Hello</code>"
+        )
+        return
+
+    command = parts[1].strip()
+
+    bot.reply_to(
+        message,
+        "🖥️ تم استلام الأمر:\n"
+        f"<code>{command}</code>\n\n"
+        "⚠️ تنفيذ أوامر Console داخل اللعبة يحتاج قناة تنفيذ "
+        "مباشرة مثل RCON أو Discord bot/bridge موجود عندك."
     )
 
 
-# ============================================================
-# /IP
-# ============================================================
-
-@bot.message_handler(
-    commands=["ip"]
-)
-def ip_command(message):
-
-    server = get_user_server(
-        message.chat.id
-    )
-
-    bot.send_message(
-
-        message.chat.id,
-
-        "🌐 <b>Server Address</b>\n\n"
-
-        f"<code>"
-        f"{server['host']}:{server['port']}"
-        f"</code>"
-    )
-
-
-# ============================================================
-# HELP
-# ============================================================
-
-@bot.message_handler(
-    commands=["help"]
-)
-def help_command(message):
-
-    bot.send_message(
-
-        message.chat.id,
-
-        "📚 <b>أوامر البوت</b>\n\n"
-
-        "/start\n"
-        "/status\n"
-        "/ip\n"
-        "/help\n"
-        "/start_server\n"
-        "/stop_server\n"
-        "/restart\n"
-        "/whitelist_add\n"
-        "/whitelist_remove"
-    )
-
-
-# ============================================================
-# RENDER HEALTH
-# ============================================================
-
-class HealthHandler(
-    BaseHTTPRequestHandler
-):
+class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
-
         self.send_response(200)
 
         self.send_header(
@@ -951,16 +643,11 @@ class HealthHandler(
             b"Telegram Minecraft Bot is running."
         )
 
-    def log_message(
-        self,
-        format,
-        *args
-    ):
+    def log_message(self, format, *args):
         return
 
 
 def run_health_server():
-
     server = ThreadingHTTPServer(
         ("0.0.0.0", PORT),
         HealthHandler
@@ -973,60 +660,31 @@ def run_health_server():
     server.serve_forever()
 
 
-# ============================================================
-# POLLING
-# ============================================================
-
 def run_bot():
-
     while True:
-
         try:
-
-            print(
-                "Telegram bot started."
-            )
+            print("Telegram bot started.")
 
             bot.infinity_polling(
-
                 timeout=30,
-
                 long_polling_timeout=30,
-
                 skip_pending=True
             )
 
         except Exception as exc:
-
             print(
-                "Telegram error:",
-                exc
+                f"Telegram error: {exc}"
             )
 
             time.sleep(5)
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
 if __name__ == "__main__":
-
-    health_thread = threading.Thread(
-
+    health = threading.Thread(
         target=run_health_server,
-
         daemon=True
     )
 
-    health_thread.start()
-
-    print(
-        "Aternos account control: ENABLED"
-    )
-
-    print(
-        "Minecraft status: ENABLED"
-    )
+    health.start()
 
     run_bot()
