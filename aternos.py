@@ -1,159 +1,486 @@
 import os
+import threading
+from typing import Optional
 
-from python_aternos import Client_Aternos
+from python_aternos import Client
 
 
-ATERNOS_USERNAME = os.getenv("ATERNOS_USERNAME", "").strip()
-ATERNOS_PASSWORD = os.getenv("ATERNOS_PASSWORD", "").strip()
+# ============================================================
+# CONFIG
+# ============================================================
 
-if not ATERNOS_USERNAME:
-    raise RuntimeError("ATERNOS_USERNAME غير موجود في Render")
+ATERNOS_SESSION = os.getenv("ATERNOS_SESSION", "").strip()
 
-if not ATERNOS_PASSWORD:
-    raise RuntimeError("ATERNOS_PASSWORD غير موجود في Render")
+MC_SERVER_HOST = os.getenv(
+    "MC_SERVER_HOST",
+    "MACESMP37.aternos.me"
+).strip().lower()
 
+# ============================================================
+# GLOBAL
+# ============================================================
 
 _client = None
+_account = None
+_server = None
+_lock = threading.RLock()
 
 
-def get_client():
-    global _client
+# ============================================================
+# LOGIN
+# ============================================================
 
-    if _client is None:
-        _client = Client_Aternos(
-            ATERNOS_USERNAME,
-            password=ATERNOS_PASSWORD
-        )
+def connect():
+    """
+    تسجيل الدخول إلى Aternos باستخدام Session.
+    """
 
-    return _client
+    global _client, _account, _server
 
-
-def get_servers():
-    client = get_client()
-
-    servers = client.list_servers()
-
-    if not servers:
+    if not ATERNOS_SESSION:
         raise RuntimeError(
-            "تم تسجيل الدخول، لكن لم يتم العثور على سيرفرات في حساب Aternos."
+            "ATERNOS_SESSION غير موجود في Environment Variables"
         )
 
-    return servers
+    with _lock:
 
+        if _account is not None:
+            return _account
+
+        _client = Client()
+
+        # تسجيل الدخول باستخدام Session
+        _client.login_with_session(
+            ATERNOS_SESSION
+        )
+
+        _account = _client.account
+
+        # جلب السيرفرات
+        servers = _account.list_servers()
+
+        if not servers:
+            raise RuntimeError(
+                "لم يتم العثور على أي سيرفر في حساب Aternos."
+            )
+
+        # البحث عن السيرفر حسب العنوان
+        selected = None
+
+        for server in servers:
+
+            address = str(
+                getattr(server, "address", "")
+            ).lower().strip()
+
+            if address == MC_SERVER_HOST:
+                selected = server
+                break
+
+            # بعض الحالات يكون العنوان بدون نطاق
+            if MC_SERVER_HOST in address:
+                selected = server
+                break
+
+        # إذا لم نجده نستخدم أول سيرفر
+        if selected is None:
+            selected = servers[0]
+
+        _server = selected
+
+        return _account
+
+
+# ============================================================
+# GET SERVER
+# ============================================================
 
 def get_server():
-    servers = get_servers()
-
-    # السيرفر الأول
-    return servers[0]
-
-
-def _call_server_method(server, method_names):
     """
-    يحاول العثور على اسم الدالة الصحيح في نسخة المكتبة المثبتة.
+    إرجاع سيرفر Aternos المرتبط بالحساب.
     """
 
-    for name in method_names:
-        method = getattr(server, name, None)
+    global _server
 
-        if callable(method):
-            return method()
+    with _lock:
 
-    raise RuntimeError(
-        "إصدار python-aternos المثبت لا يحتوي على الدالة المطلوبة. "
-        f"الدوال المطلوبة: {', '.join(method_names)}"
-    )
+        if _server is None:
+            connect()
 
+        if _server is None:
+            raise RuntimeError(
+                "تعذر الحصول على سيرفر Aternos."
+            )
+
+        return _server
+
+
+# ============================================================
+# REFRESH
+# ============================================================
+
+def refresh():
+    """
+    إعادة جلب معلومات السيرفر من Aternos.
+    """
+
+    global _server
+
+    with _lock:
+
+        account = connect()
+
+        servers = account.list_servers()
+
+        selected = None
+
+        for server in servers:
+
+            address = str(
+                getattr(server, "address", "")
+            ).lower().strip()
+
+            if address == MC_SERVER_HOST:
+                selected = server
+                break
+
+        if selected is None and servers:
+            selected = servers[0]
+
+        _server = selected
+
+        return _server
+
+
+# ============================================================
+# START
+# ============================================================
 
 def start():
+    """
+    تشغيل السيرفر فعليًا من خلال حساب Aternos.
+    """
+
     server = get_server()
 
-    result = _call_server_method(
-        server,
-        [
-            "start",
-            "Start",
-            "start_server"
-        ]
-    )
+    try:
+        result = server.start()
 
-    return {
-        "success": True,
-        "action": "start",
-        "result": result
-    }
+        return {
+            "success": True,
+            "action": "start",
+            "message": "تم إرسال أمر تشغيل السيرفر إلى Aternos.",
+            "result": result
+        }
 
+    except Exception as exc:
+
+        return {
+            "success": False,
+            "action": "start",
+            "message": str(exc)
+        }
+
+
+# ============================================================
+# STOP
+# ============================================================
 
 def stop():
+    """
+    إيقاف السيرفر فعليًا.
+    """
+
     server = get_server()
 
-    result = _call_server_method(
-        server,
-        [
-            "stop",
-            "Stop",
-            "stop_server"
-        ]
-    )
+    try:
+        result = server.stop()
 
-    return {
-        "success": True,
-        "action": "stop",
-        "result": result
-    }
+        return {
+            "success": True,
+            "action": "stop",
+            "message": "تم إرسال أمر إيقاف السيرفر إلى Aternos.",
+            "result": result
+        }
 
+    except Exception as exc:
+
+        return {
+            "success": False,
+            "action": "stop",
+            "message": str(exc)
+        }
+
+
+# ============================================================
+# RESTART
+# ============================================================
 
 def restart():
+    """
+    إعادة تشغيل السيرفر.
+    """
+
     server = get_server()
 
-    # بعض الإصدارات لا تحتوي restart
-    restart_method = getattr(server, "restart", None)
+    try:
 
-    if callable(restart_method):
-        result = restart_method()
+        # بعض إصدارات المكتبة توفر restart مباشرة
+        if hasattr(server, "restart"):
+
+            result = server.restart()
+
+            return {
+                "success": True,
+                "action": "restart",
+                "message": "تم إرسال أمر Restart إلى Aternos.",
+                "result": result
+            }
+
+        # fallback
+        stop_result = server.stop()
 
         return {
             "success": True,
             "action": "restart",
-            "result": result
+            "message": (
+                "تم إرسال أمر الإيقاف. "
+                "إذا كانت نسخة المكتبة لا توفر restart "
+                "مباشرة، يجب تشغيل السيرفر بعد توقفه."
+            ),
+            "result": stop_result
         }
 
-    # إذا لم توجد restart نحاول Stop ثم Start
-    _call_server_method(
-        server,
-        [
-            "stop",
-            "Stop",
-            "stop_server"
-        ]
-    )
+    except Exception as exc:
 
-    result = _call_server_method(
-        server,
-        [
-            "start",
-            "Start",
-            "start_server"
-        ]
-    )
-
-    return {
-        "success": True,
-        "action": "restart",
-        "result": result
-    }
+        return {
+            "success": False,
+            "action": "restart",
+            "message": str(exc)
+        }
 
 
-def get_status():
+# ============================================================
+# ATERNOS STATUS
+# ============================================================
+
+def get_aternos_status():
+    """
+    إرجاع حالة السيرفر من Aternos نفسه.
+    """
+
+    try:
+
+        server = get_server()
+
+        # تحديث البيانات إن أمكن
+        try:
+            server = refresh()
+        except Exception:
+            pass
+
+        data = {}
+
+        # الخصائص المحتملة في python-aternos
+        for key in [
+            "status",
+            "online",
+            "players",
+            "max_players",
+            "address",
+            "software",
+            "version",
+            "motd",
+            "host",
+            "port"
+        ]:
+
+            try:
+                data[key] = getattr(server, key)
+            except Exception:
+                pass
+
+        return {
+            "success": True,
+            "server": data
+        }
+
+    except Exception as exc:
+
+        return {
+            "success": False,
+            "error": str(exc)
+        }
+
+
+# ============================================================
+# PLAYERS
+# ============================================================
+
+def get_players():
+    """
+    محاولة الحصول على قائمة اللاعبين من Aternos.
+    """
+
     server = get_server()
 
-    status = getattr(server, "status", None)
+    players = []
 
-    if callable(status):
-        status = status()
+    # بعض نسخ المكتبة توفر playerlist
+    for attribute in [
+        "players",
+        "playerlist"
+    ]:
 
-    return {
-        "success": True,
-        "status": str(status),
-        "server": server
-    }
+        try:
+
+            value = getattr(server, attribute)
+
+            if isinstance(value, (list, tuple, set)):
+                players = list(value)
+                break
+
+        except Exception:
+            pass
+
+    return players
+
+
+# ============================================================
+# CONSOLE COMMAND
+# ============================================================
+
+def send_command(command: str):
+    """
+    إرسال أمر Minecraft إلى Console.
+
+    يعتمد على WebSocket/Console API في المكتبة إذا كان متاحًا.
+    """
+
+    command = str(command).strip()
+
+    if not command:
+        raise ValueError(
+            "الأمر فارغ."
+        )
+
+    server = get_server()
+
+    # بعض نسخ python-aternos توفر command()
+    if hasattr(server, "command"):
+
+        return server.command(command)
+
+    # وبعض النسخ توفر send_command()
+    if hasattr(server, "send_command"):
+
+        return server.send_command(command)
+
+    raise RuntimeError(
+        "نسخة python-aternos الحالية لا توفر "
+        "واجهة Console command مباشرة."
+    )
+
+
+# ============================================================
+# WHITELIST
+# ============================================================
+
+def whitelist_add(player: str):
+    """
+    إضافة لاعب إلى Whitelist.
+    """
+
+    player = str(player).strip()
+
+    if not player:
+        raise ValueError("اسم اللاعب فارغ.")
+
+    return send_command(
+        f"whitelist add {player}"
+    )
+
+
+def whitelist_remove(player: str):
+    """
+    إزالة لاعب من Whitelist.
+    """
+
+    player = str(player).strip()
+
+    if not player:
+        raise ValueError("اسم اللاعب فارغ.")
+
+    return send_command(
+        f"whitelist remove {player}"
+    )
+
+
+def whitelist_on():
+    return send_command(
+        "whitelist on"
+    )
+
+
+def whitelist_off():
+    return send_command(
+        "whitelist off"
+    )
+
+
+def whitelist_list():
+    return send_command(
+        "whitelist list"
+    )
+
+
+# ============================================================
+# CONSOLE
+# ============================================================
+
+def console(command: str):
+    return send_command(command)
+
+
+# ============================================================
+# GET STATUS ALIAS
+# ============================================================
+
+def get_status():
+    return get_aternos_status()
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+if __name__ == "__main__":
+
+    print("Connecting to Aternos...")
+
+    try:
+
+        connect()
+
+        server = get_server()
+
+        print(
+            "Connected to:",
+            getattr(
+                server,
+                "address",
+                "Unknown"
+            )
+        )
+
+        print(
+            "Status:",
+            get_aternos_status()
+        )
+
+    except Exception as exc:
+
+        print(
+            "Aternos error:",
+            exc
+            )
