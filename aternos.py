@@ -1,5 +1,3 @@
-# aternos.py
-
 import os
 from python_aternos import Client_Aternos
 
@@ -11,103 +9,74 @@ if not ATERNOS_USER or not ATERNOS_PASS:
         "ATERNOS_USERNAME و ATERNOS_PASSWORD غير موجودين في Environment Variables"
     )
 
-# تسجيل الدخول إلى حساب Aternos
 aternos = Client_Aternos(
     ATERNOS_USER,
     password=ATERNOS_PASS
 )
 
-# جلب السيرفرات
-servers = aternos.list_servers()
 
-if not servers:
-    raise RuntimeError("لم يتم العثور على أي سيرفر في حساب Aternos")
-
-# السيرفر الافتراضي
-myserver = servers[0]
+def get_servers():
+    return aternos.list_servers()
 
 
 def get_server():
-    """إرجاع السيرفر المحدد."""
-    return myserver
+    servers = get_servers()
 
+    if not servers:
+        raise RuntimeError("لم يتم العثور على أي سيرفر في حساب Aternos")
 
-def get_status():
-    """إرجاع حالة السيرفر من Aternos."""
-    try:
-        myserver.fetch()
-
-        status = str(
-            getattr(myserver, "status", "")
-        ).lower()
-
-        return {
-            "success": True,
-            "status": status,
-            "online": status in (
-                "online",
-                "running"
-            )
-        }
-
-    except Exception as exc:
-        return {
-            "success": False,
-            "online": False,
-            "status": "unknown",
-            "error": str(exc)
-        }
+    return servers[0]
 
 
 def start():
-    """تشغيل السيرفر عبر حساب Aternos."""
+    server = get_server()
 
-    try:
-        myserver.start()
+    result = server.start()
 
-        return {
-            "success": True,
-            "message": "تم إرسال أمر تشغيل السيرفر إلى Aternos."
-        }
-
-    except Exception as exc:
-        return {
-            "success": False,
-            "message": str(exc)
-        }
+    return {
+        "success": True,
+        "action": "start",
+        "server": server,
+        "result": result
+    }
 
 
 def stop():
-    """إيقاف السيرفر عبر حساب Aternos."""
+    server = get_server()
 
-    try:
-        myserver.stop()
+    result = server.stop()
 
-        return {
-            "success": True,
-            "message": "تم إرسال أمر إيقاف السيرفر إلى Aternos."
-        }
-
-    except Exception as exc:
-        return {
-            "success": False,
-            "message": str(exc)
-        }
+    return {
+        "success": True,
+        "action": "stop",
+        "server": server,
+        "result": result
+    }
 
 
 def restart():
-    """إعادة تشغيل السيرفر عبر Aternos."""
+    server = get_server()
 
-    try:
-        myserver.restart()
+    result = server.restart()
 
-        return {
-            "success": True,
-            "message": "تم إرسال أمر Restart إلى Aternos."
-        }
+    return {
+        "success": True,
+        "action": "restart",
+        "server": server,
+        "result": result
+    }
 
-    except Exception as exc:
-        return {
-            "success": False,
-            "message": str(exc)
-        }
+
+def get_status():
+    server = get_server()
+
+    status = getattr(server, "status", None)
+
+    if callable(status):
+        status = status()
+
+    return {
+        "success": True,
+        "status": str(status),
+        "server": server
+}
