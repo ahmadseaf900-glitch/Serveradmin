@@ -1,2 +1,4 @@
-pyTelegramBotAPI
-python-aternos
+pyTelegramBotAPI==4.29.1
+mcstatus==12.0.0
+python-aternos==3.0.0
+requests==2.32.5
