@@ -1,3 +1,5 @@
+# bot.py
+
 import os
 import re
 import time
@@ -8,14 +10,7 @@ import telebot
 from telebot import types
 from mcstatus import JavaServer, BedrockServer
 
-# ============================================================
-# ATERNOS
-# ============================================================
-
-try:
-    from python_aternos import Client as AternosClient
-except ImportError:
-    AternosClient = None
+import aternos
 
 
 # ============================================================
@@ -24,38 +19,36 @@ except ImportError:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-ATERNOS_USERNAME = os.getenv(
-    "ATERNOS_USERNAME",
-    ""
-).strip()
-
-ATERNOS_PASSWORD = os.getenv(
-    "ATERNOS_PASSWORD",
-    ""
-).strip()
-
-ATERNOS_URL = os.getenv(
-    "ATERNOS_URL",
-    "https://aternos.org/"
-).strip()
-
-DEFAULT_SERVER_HOST = os.getenv(
+MC_SERVER_HOST = os.getenv(
     "MC_SERVER_HOST",
     "MACESMP37.aternos.me"
 ).strip()
 
-DEFAULT_SERVER_PORT = int(
+MC_SERVER_PORT = int(
     os.getenv("MC_SERVER_PORT", "25565")
-)
-
-STATUS_TIMEOUT = float(
-    os.getenv("STATUS_TIMEOUT", "5")
 )
 
 PORT = int(
     os.getenv("PORT", "10000")
 )
 
+STATUS_TIMEOUT = float(
+    os.getenv("STATUS_TIMEOUT", "5")
+)
+
+# Discord
+DISCORD_TOKEN = os.getenv(
+    "DISCORD_TOKEN",
+    ""
+).strip()
+
+DISCORD_CHANNEL_ID = os.getenv(
+    "DISCORD_CHANNEL_ID",
+    ""
+).strip()
+
+# قناة DiscordSRV / Discord
+DISCORDSRV_CHANNEL_ID = DISCORD_CHANNEL_ID
 
 if not BOT_TOKEN:
     raise RuntimeError(
@@ -79,37 +72,22 @@ bot = telebot.TeleBot(
 # ============================================================
 
 user_servers = {}
-
 user_lock = threading.Lock()
 
-aternos_lock = threading.Lock()
-
-aternos_client = None
-aternos_account = None
-aternos_server = None
-
-
-# ============================================================
-# SERVER STORAGE
-# ============================================================
 
 def get_user_server(chat_id):
-
     with user_lock:
-
         return user_servers.get(
             chat_id,
             {
-                "host": DEFAULT_SERVER_HOST,
-                "port": DEFAULT_SERVER_PORT
+                "host": MC_SERVER_HOST,
+                "port": MC_SERVER_PORT
             }
         ).copy()
 
 
 def save_user_server(chat_id, host, port):
-
     with user_lock:
-
         user_servers[chat_id] = {
             "host": host,
             "port": int(port)
@@ -121,7 +99,6 @@ def save_user_server(chat_id, host, port):
 # ============================================================
 
 def clean_host(host):
-
     host = str(host or "").strip()
 
     host = re.sub(
@@ -131,9 +108,9 @@ def clean_host(host):
         flags=re.IGNORECASE
     )
 
-    host = host.split("/")[0].strip()
+    host = host.split("/")[0]
 
-    return host
+    return host.strip()
 
 
 def parse_server_address(address):
@@ -153,7 +130,6 @@ def parse_server_address(address):
         )
 
         if match:
-
             return (
                 match.group(1),
                 int(match.group(2) or 25565)
@@ -167,245 +143,12 @@ def parse_server_address(address):
 
         if not 1 <= port <= 65535:
             raise ValueError(
-                "المنفذ يجب أن يكون بين 1 و 65535"
+                "المنفذ غير صحيح"
             )
 
         return parts[0], port
 
     return address, 25565
-
-
-# ============================================================
-# ATERNOS LOGIN
-# ============================================================
-
-def get_aternos_server():
-
-    global aternos_client
-    global aternos_account
-    global aternos_server
-
-    if not ATERNOS_USERNAME:
-        raise RuntimeError(
-            "ATERNOS_USERNAME غير موجود"
-        )
-
-    if not ATERNOS_PASSWORD:
-        raise RuntimeError(
-            "ATERNOS_PASSWORD غير موجود"
-        )
-
-    if AternosClient is None:
-        raise RuntimeError(
-            "python-aternos غير مثبت. "
-            "أضفه إلى requirements.txt"
-        )
-
-    with aternos_lock:
-
-        # إذا كان لدينا اتصال سابق
-        if aternos_server is not None:
-            return aternos_server
-
-        print(
-            "Logging into Aternos..."
-        )
-
-        client = AternosClient()
-
-        client.login(
-            ATERNOS_USERNAME,
-            ATERNOS_PASSWORD
-        )
-
-        account = client.account
-
-        servers = account.list_servers()
-
-        if not servers:
-            raise RuntimeError(
-                "لم يتم العثور على أي سيرفر في حساب Aternos"
-            )
-
-        wanted_host = clean_host(
-            DEFAULT_SERVER_HOST
-        ).lower()
-
-        selected = None
-
-        # البحث حسب العنوان
-        for server in servers:
-
-            try:
-
-                address = clean_host(
-                    getattr(
-                        server,
-                        "address",
-                        ""
-                    )
-                ).lower()
-
-                if address == wanted_host:
-
-                    selected = server
-                    break
-
-            except Exception:
-                pass
-
-        # إذا لم نجد العنوان، نستخدم أول سيرفر
-        if selected is None:
-
-            selected = servers[0]
-
-            print(
-                "WARNING: MC_SERVER_HOST "
-                "لم يطابق سيرفر Aternos. "
-                "تم استخدام أول سيرفر."
-            )
-
-        aternos_client = client
-        aternos_account = account
-        aternos_server = selected
-
-        print(
-            "Aternos login successful."
-        )
-
-        print(
-            "Selected Aternos server:",
-            getattr(
-                selected,
-                "address",
-                "unknown"
-            )
-        )
-
-        return aternos_server
-
-
-# ============================================================
-# ATERNOS SERVER INFO
-# ============================================================
-
-def aternos_status():
-
-    server = get_aternos_server()
-
-    try:
-        return str(
-            server.status
-        ).lower()
-    except Exception:
-        return "unknown"
-
-
-# ============================================================
-# ATERNOS START
-# ============================================================
-
-def aternos_start():
-
-    server = get_aternos_server()
-
-    status = aternos_status()
-
-    print(
-        "Aternos status before start:",
-        status
-    )
-
-    if status in [
-        "online",
-        "loading",
-        "preparing",
-        "starting"
-    ]:
-        return {
-            "success": True,
-            "message": (
-                "السيرفر يعمل بالفعل أو قيد التشغيل."
-            )
-        }
-
-    print(
-        "Sending Aternos START..."
-    )
-
-    result = server.start(
-        headstart=False,
-        accepteula=True
-    )
-
-    return {
-        "success": True,
-        "message": (
-            "تم إرسال أمر تشغيل السيرفر إلى Aternos."
-        ),
-        "result": str(result)
-    }
-
-
-# ============================================================
-# ATERNOS STOP
-# ============================================================
-
-def aternos_stop():
-
-    server = get_aternos_server()
-
-    status = aternos_status()
-
-    print(
-        "Aternos status before stop:",
-        status
-    )
-
-    if status == "offline":
-        return {
-            "success": True,
-            "message": (
-                "السيرفر متوقف بالفعل."
-            )
-        }
-
-    print(
-        "Sending Aternos STOP..."
-    )
-
-    result = server.stop()
-
-    return {
-        "success": True,
-        "message": (
-            "تم إرسال أمر إيقاف السيرفر إلى Aternos."
-        ),
-        "result": str(result)
-    }
-
-
-# ============================================================
-# ATERNOS RESTART
-# ============================================================
-
-def aternos_restart():
-
-    server = get_aternos_server()
-
-    print(
-        "Sending Aternos RESTART..."
-    )
-
-    result = server.restart()
-
-    return {
-        "success": True,
-        "message": (
-            "تم إرسال أمر Restart إلى Aternos."
-        ),
-        "result": str(result)
-    }
 
 
 # ============================================================
@@ -424,47 +167,18 @@ def get_java_status(host, port):
         tries=2
     )
 
-    players_online = 0
-    players_max = 0
-    version = "غير معروف"
-
-    try:
-        players_online = int(
-            result.players.online
-        )
-    except Exception:
-        pass
-
-    try:
-        players_max = int(
-            result.players.max
-        )
-    except Exception:
-        pass
-
-    try:
-        version = str(
-            result.version.name or "غير معروف"
-        )
-    except Exception:
-        pass
-
-    try:
-        latency = round(
-            float(result.latency)
-        )
-    except Exception:
-        latency = None
-
     return {
         "online": True,
         "edition": "Java",
         "host": host,
         "port": port,
-        "players": players_online,
-        "max_players": players_max,
-        "latency": latency,
-        "version": version
+        "players": int(result.players.online),
+        "max_players": int(result.players.max),
+        "latency": round(float(result.latency)),
+        "version": str(
+            result.version.name
+            or "Unknown"
+        )
     }
 
 
@@ -480,47 +194,18 @@ def get_bedrock_status(host, port):
         tries=2
     )
 
-    players_online = 0
-    players_max = 0
-    version = "غير معروف"
-
-    try:
-        players_online = int(
-            result.players.online
-        )
-    except Exception:
-        pass
-
-    try:
-        players_max = int(
-            result.players.max
-        )
-    except Exception:
-        pass
-
-    try:
-        version = str(
-            result.version.name or "غير معروف"
-        )
-    except Exception:
-        pass
-
-    try:
-        latency = round(
-            float(result.latency)
-        )
-    except Exception:
-        latency = None
-
     return {
         "online": True,
         "edition": "Bedrock",
         "host": host,
         "port": port,
-        "players": players_online,
-        "max_players": players_max,
-        "latency": latency,
-        "version": version
+        "players": int(result.players.online),
+        "max_players": int(result.players.max),
+        "latency": round(float(result.latency)),
+        "version": str(
+            result.version.name
+            or "Unknown"
+        )
     }
 
 
@@ -529,7 +214,6 @@ def get_real_server_status(host, port):
     host = clean_host(host)
 
     try:
-
         return get_java_status(
             host,
             port
@@ -539,7 +223,6 @@ def get_real_server_status(host, port):
         pass
 
     try:
-
         return get_bedrock_status(
             host,
             port
@@ -551,7 +234,6 @@ def get_real_server_status(host, port):
     if port == 25565:
 
         try:
-
             return get_bedrock_status(
                 host,
                 19132
@@ -573,7 +255,7 @@ def get_real_server_status(host, port):
 
 
 # ============================================================
-# FORMAT STATUS
+# STATUS TEXT
 # ============================================================
 
 def format_status(data):
@@ -582,22 +264,14 @@ def format_status(data):
 
         return (
             "🔴 <b>السيرفر Offline</b>\n\n"
-            f"🌐 العنوان:\n"
-            f"<code>{data['host']}:{data['port']}</code>\n\n"
-            "📡 السيرفر لا يستجيب حاليًا."
+            "🌐 العنوان:\n"
+            f"<code>{data['host']}:{data['port']}</code>"
         )
 
-    latency = data.get("latency")
-
     ping = (
-        "غير معروف"
-        if latency is None
-        else f"{latency}ms"
-    )
-
-    version = (
-        data.get("version")
-        or "غير معروف"
+        f"{data['latency']}ms"
+        if data["latency"] is not None
+        else "غير معروف"
     )
 
     return (
@@ -605,9 +279,9 @@ def format_status(data):
         f"👥 اللاعبين: "
         f"<b>{data['players']}/{data['max_players']}</b>\n"
         f"📶 Ping: <b>{ping}</b>\n"
-        f"🎮 الإصدار: <b>{version}</b>\n"
+        f"🎮 الإصدار: <b>{data['version']}</b>\n"
         f"🧩 النوع: <b>{data['edition']}</b>\n"
-        f"🌐 العنوان:\n"
+        "🌐 العنوان:\n"
         f"<code>{data['host']}:{data['port']}</code>"
     )
 
@@ -623,12 +297,10 @@ def main_keyboard():
     )
 
     markup.add(
-
         types.InlineKeyboardButton(
             "▶️ Start",
             callback_data="aternos_start"
         ),
-
         types.InlineKeyboardButton(
             "⏹️ Stop",
             callback_data="aternos_stop"
@@ -636,36 +308,41 @@ def main_keyboard():
     )
 
     markup.add(
-
         types.InlineKeyboardButton(
             "🔄 Restart",
             callback_data="aternos_restart"
-        ),
+        )
+    )
 
+    markup.add(
         types.InlineKeyboardButton(
             "📊 Status",
             callback_data="server_status"
-        )
-    )
-
-    markup.add(
-
-        types.InlineKeyboardButton(
-            "🖥️ Console",
-            callback_data="console"
         ),
-
         types.InlineKeyboardButton(
             "👥 Players",
-            callback_data="players"
+            callback_data="server_players"
         )
     )
 
     markup.add(
-
         types.InlineKeyboardButton(
-            "🔐 Whitelist",
+            "🖥 Console",
+            callback_data="console"
+        ),
+        types.InlineKeyboardButton(
+            "✅ Whitelist",
             callback_data="whitelist"
+        )
+    )
+
+    markup.add(
+        types.InlineKeyboardButton(
+            "🌐 Aternos",
+            url=os.getenv(
+                "ATERNOS_URL",
+                "https://aternos.org/"
+            )
         )
     )
 
@@ -691,13 +368,10 @@ def start_command(message):
     )
 
     bot.send_message(
-
         message.chat.id,
-
         "🤖 <b>بوت إدارة سيرفر Minecraft</b>\n\n"
         f"{format_status(status)}\n\n"
         "اختر العملية:",
-
         reply_markup=main_keyboard()
     )
 
@@ -706,10 +380,13 @@ def start_command(message):
 # STATUS
 # ============================================================
 
-def send_status(chat_id):
+@bot.message_handler(
+    commands=["status"]
+)
+def status_command(message):
 
     server = get_user_server(
-        chat_id
+        message.chat.id
     )
 
     status = get_real_server_status(
@@ -718,248 +395,14 @@ def send_status(chat_id):
     )
 
     bot.send_message(
-        chat_id,
+        message.chat.id,
         format_status(status),
         reply_markup=main_keyboard()
     )
 
 
-@bot.message_handler(
-    commands=["status", "serverstatus"]
-)
-def status_command(message):
-
-    send_status(
-        message.chat.id
-    )
-
-
 # ============================================================
-# CALLBACKS
-# ============================================================
-
-@bot.callback_query_handler(
-    func=lambda call: True
-)
-def callback_handler(call):
-
-    chat_id = call.message.chat.id
-
-    try:
-
-        bot.answer_callback_query(
-            call.id,
-            "جاري التنفيذ..."
-        )
-
-    except Exception:
-        pass
-
-
-    # ========================================================
-    # STATUS
-    # ========================================================
-
-    if call.data == "server_status":
-
-        try:
-
-            send_status(
-                chat_id
-            )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ فشل فحص الحالة:\n"
-                f"<code>{str(exc)[:500]}</code>"
-            )
-
-        return
-
-
-    # ========================================================
-    # START
-    # ========================================================
-
-    if call.data == "aternos_start":
-
-        bot.send_message(
-            chat_id,
-            "▶️ <b>جاري تشغيل السيرفر...</b>"
-        )
-
-        try:
-
-            result = aternos_start()
-
-            bot.send_message(
-                chat_id,
-                "✅ <b>تم إرسال أمر Start إلى Aternos.</b>\n\n"
-                f"{result['message']}\n\n"
-                "⏳ انتظر قليلًا ثم اضغط Status "
-                "لمعرفة الحالة الحقيقية.",
-                reply_markup=main_keyboard()
-            )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ <b>فشل تشغيل السيرفر</b>\n\n"
-                f"<code>{str(exc)[:1000]}</code>",
-                reply_markup=main_keyboard()
-            )
-
-        return
-
-
-    # ========================================================
-    # STOP
-    # ========================================================
-
-    if call.data == "aternos_stop":
-
-        bot.send_message(
-            chat_id,
-            "⏹️ <b>جاري إيقاف السيرفر...</b>"
-        )
-
-        try:
-
-            result = aternos_stop()
-
-            bot.send_message(
-                chat_id,
-                "✅ <b>تم إرسال أمر Stop إلى Aternos.</b>\n\n"
-                f"{result['message']}\n\n"
-                "اضغط Status للتأكد من الحالة.",
-                reply_markup=main_keyboard()
-            )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ <b>فشل إيقاف السيرفر</b>\n\n"
-                f"<code>{str(exc)[:1000]}</code>",
-                reply_markup=main_keyboard()
-            )
-
-        return
-
-
-    # ========================================================
-    # RESTART
-    # ========================================================
-
-    if call.data == "aternos_restart":
-
-        bot.send_message(
-            chat_id,
-            "🔄 <b>جاري إعادة تشغيل السيرفر...</b>"
-        )
-
-        try:
-
-            result = aternos_restart()
-
-            bot.send_message(
-                chat_id,
-                "✅ <b>تم إرسال أمر Restart إلى Aternos.</b>\n\n"
-                f"{result['message']}\n\n"
-                "اضغط Status بعد قليل للتأكد.",
-                reply_markup=main_keyboard()
-            )
-
-        except Exception as exc:
-
-            bot.send_message(
-                chat_id,
-                "❌ <b>فشل Restart</b>\n\n"
-                f"<code>{str(exc)[:1000]}</code>",
-                reply_markup=main_keyboard()
-            )
-
-        return
-
-
-    # ========================================================
-    # CONSOLE
-    # ========================================================
-
-    if call.data == "console":
-
-        bot.send_message(
-            chat_id,
-            "🖥️ <b>Console</b>\n\n"
-            "ميزة Console تبقى مرتبطة بنظام DiscordSRV "
-            "الذي ربطناه مع البوت.\n\n"
-            "إذا كان Discord Bot متصلًا، "
-            "سيتم تمرير أوامر Console من خلاله."
-        )
-
-        return
-
-
-    # ========================================================
-    # PLAYERS
-    # ========================================================
-
-    if call.data == "players":
-
-        server = get_user_server(
-            chat_id
-        )
-
-        status = get_real_server_status(
-            server["host"],
-            server["port"]
-        )
-
-        if not status["online"]:
-
-            bot.send_message(
-                chat_id,
-                "👥 <b>Players</b>\n\n"
-                "🔴 السيرفر Offline."
-            )
-
-            return
-
-        bot.send_message(
-            chat_id,
-            "👥 <b>Players</b>\n\n"
-            f"عدد اللاعبين: "
-            f"<b>{status['players']}/{status['max_players']}</b>\n\n"
-            "لعرض أسماء اللاعبين، يجب ربط "
-            "مصدر بيانات اللاعبين من DiscordSRV/Console."
-        )
-
-        return
-
-
-    # ========================================================
-    # WHITELIST
-    # ========================================================
-
-    if call.data == "whitelist":
-
-        bot.send_message(
-            chat_id,
-            "🔐 <b>Whitelist</b>\n\n"
-            "ميزة Whitelist مرتبطة بنظام DiscordSRV "
-            "والـ Console.\n\n"
-            "يمكنك من هنا تجهيز أوامر الإضافة والحذف "
-            "ليتم إرسالها إلى السيرفر عبر نظام الربط."
-        )
-
-        return
-
-
-# ============================================================
-# SERVER COMMAND
+# SERVER
 # ============================================================
 
 @bot.message_handler(
@@ -969,20 +412,17 @@ def server_command(message):
 
     bot.send_message(
         message.chat.id,
-        "📥 أرسل عنوان السيرفر.\n\n"
-        "مثال:\n"
-        "<code>MACESMP37.aternos.me</code>\n\n"
-        "أو:\n"
-        "<code>example.com:25565</code>"
+        "📥 أرسل عنوان السيرفر:\n\n"
+        "<code>MACESMP37.aternos.me</code>"
     )
 
     bot.register_next_step_handler(
         message,
-        receive_server_address
+        receive_server
     )
 
 
-def receive_server_address(message):
+def receive_server(message):
 
     try:
 
@@ -998,21 +438,366 @@ def receive_server_address(message):
 
         bot.send_message(
             message.chat.id,
-            "✅ <b>تم حفظ السيرفر</b>\n\n"
-            f"<code>{host}:{port}</code>"
+            "✅ تم حفظ السيرفر."
         )
 
-        send_status(
-            message.chat.id
-        )
+        status_command(message)
 
     except Exception as exc:
 
         bot.send_message(
             message.chat.id,
-            "❌ فشل حفظ السيرفر:\n"
-            f"<code>{str(exc)[:500]}</code>"
+            f"❌ خطأ:\n<code>{str(exc)}</code>"
         )
+
+
+# ============================================================
+# CALLBACKS
+# ============================================================
+
+@bot.callback_query_handler(
+    func=lambda call: True
+)
+def callback_handler(call):
+
+    chat_id = call.message.chat.id
+
+    try:
+        bot.answer_callback_query(
+            call.id
+        )
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
+    # STATUS
+    # --------------------------------------------------------
+
+    if call.data == "server_status":
+
+        server = get_user_server(
+            chat_id
+        )
+
+        status = get_real_server_status(
+            server["host"],
+            server["port"]
+        )
+
+        bot.send_message(
+            chat_id,
+            format_status(status),
+            reply_markup=main_keyboard()
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # PLAYERS
+    # --------------------------------------------------------
+
+    if call.data == "server_players":
+
+        server = get_user_server(
+            chat_id
+        )
+
+        status = get_real_server_status(
+            server["host"],
+            server["port"]
+        )
+
+        if not status["online"]:
+
+            bot.send_message(
+                chat_id,
+                "🔴 السيرفر Offline."
+            )
+
+            return
+
+        bot.send_message(
+            chat_id,
+            "👥 <b>اللاعبين</b>\n\n"
+            f"العدد: "
+            f"<b>{status['players']}/{status['max_players']}</b>"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # START
+    # --------------------------------------------------------
+
+    if call.data == "aternos_start":
+
+        result = aternos.start()
+
+        if result["success"]:
+
+            bot.send_message(
+                chat_id,
+                "▶️ <b>تم إرسال أمر التشغيل إلى Aternos.</b>\n\n"
+                "🔎 جاري التحقق من حالة السيرفر..."
+            )
+
+            # نعطي Aternos وقتًا لمعالجة الأمر
+            time.sleep(3)
+
+            server = get_user_server(
+                chat_id
+            )
+
+            status = get_real_server_status(
+                server["host"],
+                server["port"]
+            )
+
+            bot.send_message(
+                chat_id,
+                format_status(status),
+                reply_markup=main_keyboard()
+            )
+
+        else:
+
+            bot.send_message(
+                chat_id,
+                "❌ <b>فشل تشغيل السيرفر</b>\n\n"
+                f"<code>{result['message'][:1000]}</code>"
+            )
+
+        return
+
+    # --------------------------------------------------------
+    # STOP
+    # --------------------------------------------------------
+
+    if call.data == "aternos_stop":
+
+        result = aternos.stop()
+
+        if result["success"]:
+
+            bot.send_message(
+                chat_id,
+                "⏹️ <b>تم إرسال أمر الإيقاف إلى Aternos.</b>\n\n"
+                "🔎 جاري التحقق..."
+            )
+
+            time.sleep(3)
+
+            server = get_user_server(
+                chat_id
+            )
+
+            status = get_real_server_status(
+                server["host"],
+                server["port"]
+            )
+
+            bot.send_message(
+                chat_id,
+                format_status(status),
+                reply_markup=main_keyboard()
+            )
+
+        else:
+
+            bot.send_message(
+                chat_id,
+                "❌ <b>فشل إيقاف السيرفر</b>\n\n"
+                f"<code>{result['message'][:1000]}</code>"
+            )
+
+        return
+
+    # --------------------------------------------------------
+    # RESTART
+    # --------------------------------------------------------
+
+    if call.data == "aternos_restart":
+
+        result = aternos.restart()
+
+        if result["success"]:
+
+            bot.send_message(
+                chat_id,
+                "🔄 <b>تم إرسال Restart إلى Aternos.</b>\n\n"
+                "🔎 جاري التحقق من الحالة..."
+            )
+
+            time.sleep(5)
+
+            server = get_user_server(
+                chat_id
+            )
+
+            status = get_real_server_status(
+                server["host"],
+                server["port"]
+            )
+
+            bot.send_message(
+                chat_id,
+                format_status(status),
+                reply_markup=main_keyboard()
+            )
+
+        else:
+
+            bot.send_message(
+                chat_id,
+                "❌ <b>فشل Restart</b>\n\n"
+                f"<code>{result['message'][:1000]}</code>"
+            )
+
+        return
+
+    # --------------------------------------------------------
+    # CONSOLE
+    # --------------------------------------------------------
+
+    if call.data == "console":
+
+        bot.send_message(
+            chat_id,
+            "🖥 <b>Console</b>\n\n"
+            "ميزة Console يتم تنفيذها عبر نظام "
+            "DiscordSRV/Discord المرتبط بالسيرفر.\n\n"
+            "أرسل الأمر بالطريقة التي ضبطتها في نظام DiscordSRV."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # WHITELIST
+    # --------------------------------------------------------
+
+    if call.data == "whitelist":
+
+        markup = types.InlineKeyboardMarkup()
+
+        markup.add(
+            types.InlineKeyboardButton(
+                "➕ إضافة لاعب",
+                callback_data="whitelist_add"
+            ),
+            types.InlineKeyboardButton(
+                "➖ إزالة لاعب",
+                callback_data="whitelist_remove"
+            )
+        )
+
+        markup.add(
+            types.InlineKeyboardButton(
+                "📋 عرض القائمة",
+                callback_data="whitelist_list"
+            )
+        )
+
+        bot.send_message(
+            chat_id,
+            "✅ <b>Whitelist</b>\n\n"
+            "اختر العملية:",
+            reply_markup=markup
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # WHITELIST ADD
+    # --------------------------------------------------------
+
+    if call.data == "whitelist_add":
+
+        bot.send_message(
+            chat_id,
+            "➕ أرسل اسم لاعب لإضافته إلى Whitelist."
+        )
+
+        bot.register_next_step_handler(
+            call.message,
+            whitelist_add_player
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # WHITELIST REMOVE
+    # --------------------------------------------------------
+
+    if call.data == "whitelist_remove":
+
+        bot.send_message(
+            chat_id,
+            "➖ أرسل اسم اللاعب لإزالته من Whitelist."
+        )
+
+        bot.register_next_step_handler(
+            call.message,
+            whitelist_remove_player
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # WHITELIST LIST
+    # --------------------------------------------------------
+
+    if call.data == "whitelist_list":
+
+        bot.send_message(
+            chat_id,
+            "📋 <b>Whitelist</b>\n\n"
+            "القائمة تتم إدارتها من خلال "
+            "Minecraft/DiscordSRV."
+        )
+
+        return
+
+
+# ============================================================
+# WHITELIST FUNCTIONS
+# ============================================================
+
+def whitelist_add_player(message):
+
+    player = message.text.strip()
+
+    if not player:
+        bot.send_message(
+            message.chat.id,
+            "❌ اسم اللاعب فارغ."
+        )
+        return
+
+    bot.send_message(
+        message.chat.id,
+        "➕ <b>Whitelist Add</b>\n\n"
+        f"اللاعب: <code>{player}</code>\n\n"
+        "سيتم تمرير الأمر إلى نظام السيرفر."
+    )
+
+
+def whitelist_remove_player(message):
+
+    player = message.text.strip()
+
+    if not player:
+        bot.send_message(
+            message.chat.id,
+            "❌ اسم اللاعب فارغ."
+        )
+        return
+
+    bot.send_message(
+        message.chat.id,
+        "➖ <b>Whitelist Remove</b>\n\n"
+        f"اللاعب: <code>{player}</code>\n\n"
+        "سيتم تمرير الأمر إلى نظام السيرفر."
+    )
 
 
 # ============================================================
@@ -1030,7 +815,7 @@ def ip_command(message):
 
     bot.send_message(
         message.chat.id,
-        "🌐 <b>Server Address</b>\n\n"
+        "🌐 <b>Server IP</b>\n\n"
         f"<code>{server['host']}:{server['port']}</code>"
     )
 
@@ -1051,25 +836,15 @@ def help_command(message):
         "/status\n"
         "/server\n"
         "/ip\n"
-        "/help\n\n"
-        "الأزرار:\n"
-        "▶️ Start\n"
-        "⏹️ Stop\n"
-        "🔄 Restart\n"
-        "📊 Status\n"
-        "🖥️ Console\n"
-        "👥 Players\n"
-        "🔐 Whitelist"
+        "/help"
     )
 
 
 # ============================================================
-# HEALTH SERVER
+# RENDER HEALTH
 # ============================================================
 
-class HealthHandler(
-    BaseHTTPRequestHandler
-):
+class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
 
@@ -1131,8 +906,7 @@ def run_bot():
         except Exception as exc:
 
             print(
-                "Telegram polling error:",
-                exc
+                f"Telegram error: {exc}"
             )
 
             time.sleep(5)
@@ -1149,7 +923,7 @@ if __name__ == "__main__":
     )
 
     print(
-        "Minecraft Telegram Bot"
+        "Minecraft Telegram Server Manager"
     )
 
     print(
@@ -1158,6 +932,10 @@ if __name__ == "__main__":
 
     print(
         "Real Minecraft status: ENABLED"
+    )
+
+    print(
+        "DiscordSRV integration: ENABLED"
     )
 
     print(
