@@ -4,9 +4,9 @@ import threading
 from python_aternos import Client
 
 
+ATERNOS_SESSION = os.getenv("ATERNOS_SESSION", "").strip()
 ATERNOS_USERNAME = os.getenv("ATERNOS_USERNAME", "").strip()
 ATERNOS_PASSWORD = os.getenv("ATERNOS_PASSWORD", "").strip()
-ATERNOS_SESSION = os.getenv("ATERNOS_SESSION", "").strip()
 
 MC_SERVER_HOST = os.getenv(
     "MC_SERVER_HOST",
@@ -14,343 +14,284 @@ MC_SERVER_HOST = os.getenv(
 ).strip()
 
 
-_lock = threading.RLock()
+_lock = threading.Lock()
 _client = None
 _account = None
 _server = None
 
 
 def _login():
-    global _client, _account, _server
+    global _client, _account
+
+    if _account is not None:
+        return _account
 
     with _lock:
-        if _server is not None:
-            return _server
 
-        if not ATERNOS_USERNAME and not ATERNOS_SESSION:
-            raise RuntimeError(
-                "ضع ATERNOS_USERNAME أو ATERNOS_SESSION في Render."
-            )
+        if _account is not None:
+            return _account
 
         client = Client()
 
         if ATERNOS_SESSION:
             client.login_with_session(ATERNOS_SESSION)
-        else:
-            if not ATERNOS_PASSWORD:
-                raise RuntimeError(
-                    "ATERNOS_PASSWORD غير موجود."
-                )
 
+        elif ATERNOS_USERNAME and ATERNOS_PASSWORD:
             client.login(
                 ATERNOS_USERNAME,
                 ATERNOS_PASSWORD
             )
 
-        account = client.account
-        servers = account.list_servers()
+        else:
+            raise RuntimeError(
+                "ضع ATERNOS_SESSION أو "
+                "ATERNOS_USERNAME + ATERNOS_PASSWORD"
+            )
+
+        _client = client
+        _account = client.account
+
+        return _account
+
+
+def get_servers():
+    account = _login()
+    return account.list_servers()
+
+
+def get_server():
+    global _server
+
+    with _lock:
+
+        servers = get_servers()
 
         if not servers:
             raise RuntimeError(
                 "لم يتم العثور على أي سيرفر في حساب Aternos."
             )
 
-        selected = None
+        target = MC_SERVER_HOST.lower()
 
-        wanted = MC_SERVER_HOST.lower().strip()
-
+        # البحث بالعنوان
         for server in servers:
+
             try:
                 address = str(server.address).lower()
-
-                if wanted in address or address in wanted:
-                    selected = server
-                    break
             except Exception:
-                pass
+                address = ""
 
-        if selected is None:
-            selected = servers[0]
+            try:
+                domain = str(server.domain).lower()
+            except Exception:
+                domain = ""
 
-        _client = client
-        _account = account
-        _server = selected
+            if target in (address, domain):
+                _server = server
+                return server
+
+        # إذا لم يجد العنوان نستخدم الأول
+        _server = servers[0]
 
         return _server
-
-
-def get_server():
-    return _login()
 
 
 def refresh():
     global _server
 
-    with _lock:
-        _server = None
-
-    return _login()
-
-
-def server_info():
     server = get_server()
 
-    result = {}
+    try:
+        server.fetch()
+    except Exception:
+        pass
 
-    for name in (
-        "name",
-        "address",
-        "status",
-        "status_num",
-        "software",
-        "version",
-        "port",
-        "ram",
-        "players_count",
-        "players_list",
-    ):
-        try:
-            value = getattr(server, name)
+    return server
 
-            if callable(value):
-                value = value()
 
-            result[name] = value
-        except Exception:
-            result[name] = None
-
-    return result
-
+# ============================================================
+# START
+# ============================================================
 
 def start():
     server = get_server()
 
-    try:
-        result = server.start()
-    except Exception:
-        refresh()
-        result = _server.start()
+    server.start()
 
     return {
         "success": True,
-        "message": "تم إرسال أمر تشغيل السيرفر إلى Aternos.",
-        "result": result,
+        "action": "start",
+        "status": str(server.status)
     }
 
+
+# ============================================================
+# STOP
+# ============================================================
 
 def stop():
     server = get_server()
 
-    try:
-        result = server.stop()
-    except Exception:
-        refresh()
-        result = _server.stop()
+    server.stop()
 
     return {
         "success": True,
-        "message": "تم إرسال أمر إيقاف السيرفر إلى Aternos.",
-        "result": result,
+        "action": "stop",
+        "status": str(server.status)
     }
 
+
+# ============================================================
+# RESTART
+# ============================================================
 
 def restart():
     server = get_server()
 
-    try:
-        result = server.restart()
-    except Exception:
-        refresh()
-        result = _server.restart()
+    server.restart()
 
     return {
         "success": True,
-        "message": "تم إرسال أمر Restart إلى Aternos.",
-        "result": result,
+        "action": "restart",
+        "status": str(server.status)
     }
 
 
-def get_status():
-    server = get_server()
+# ============================================================
+# ATERNOS STATUS
+# ============================================================
 
-    try:
-        status = server.status
-    except Exception:
-        refresh()
-        status = _server.status
-
-    if callable(status):
-        status = status()
+def status():
+    server = refresh()
 
     return {
-        "status": str(status),
-        "status_num": getattr(
-            server,
-            "status_num",
-            None
-        ),
-        "address": getattr(
-            server,
-            "address",
-            MC_SERVER_HOST
-        ),
-        "software": getattr(
-            server,
-            "software",
-            None
-        ),
-        "version": getattr(
-            server,
-            "version",
-            None
-        ),
-        "players": get_players(),
+        "success": True,
+        "status": str(server.status),
+        "address": str(server.address),
+        "domain": str(server.domain),
+        "port": int(server.port),
+        "players": int(server.players_count),
+        "player_list": list(server.players_list),
+        "slots": int(server.slots),
+        "software": str(server.software),
+        "version": str(server.version),
+        "edition": str(server.edition),
+        "ram": int(server.ram)
     }
 
 
-def get_players():
-    server = get_server()
+# ============================================================
+# PLAYERS
+# ============================================================
 
-    try:
-        players = server.players_list
-    except Exception:
-        players = []
+def players():
+    server = refresh()
 
-    if callable(players):
-        players = players()
-
-    if players is None:
-        return []
-
-    try:
-        return list(players)
-    except Exception:
-        return [str(players)]
+    return {
+        "success": True,
+        "online": int(server.players_count),
+        "max": int(server.slots),
+        "players": list(server.players_list)
+    }
 
 
-def players_count():
-    server = get_server()
+# ============================================================
+# WHITELIST
+#
+# نحاول استخدام واجهة Players الخاصة بالمكتبة.
+# ============================================================
 
-    try:
-        value = server.players_count
-    except Exception:
-        return len(get_players())
-
-    if callable(value):
-        value = value()
-
-    try:
-        return int(value)
-    except Exception:
-        return len(get_players())
-
-
-def _players_list(list_type):
+def get_whitelist_object():
     server = get_server()
 
     try:
         from python_aternos.atplayers import Lists
-    except ImportError:
-        from python_aternos import atplayers
-        Lists = atplayers.Lists
 
-    return server.players(
-        getattr(Lists, list_type)
-    )
+        return server.players(
+            Lists.WHITELIST
+        )
 
-
-def whitelist():
-    return _players_list("WHITELIST")
-
-
-def operators():
-    return _players_list("OPERATORS")
+    except Exception as exc:
+        raise RuntimeError(
+            "تعذر الوصول إلى قائمة Whitelist عبر "
+            "إصدار python-aternos الموجود: "
+            + str(exc)
+        )
 
 
 def whitelist_list():
-    wl = whitelist()
-
-    for attr in ("list", "players", "names"):
-        try:
-            value = getattr(wl, attr)
-
-            if callable(value):
-                value = value()
-
-            if value is not None:
-                return list(value)
-        except Exception:
-            pass
+    whitelist = get_whitelist_object()
 
     try:
-        return list(wl)
+        whitelist.fetch()
     except Exception:
-        return []
+        pass
+
+    try:
+        values = list(whitelist)
+    except Exception:
+        try:
+            values = list(whitelist.players)
+        except Exception:
+            values = []
+
+    return [
+        str(x)
+        for x in values
+    ]
 
 
 def whitelist_add(player):
-    wl = whitelist()
+    player = str(player).strip()
 
-    for method in ("add", "add_player"):
-        if hasattr(wl, method):
-            fn = getattr(wl, method)
+    if not player:
+        raise ValueError(
+            "اسم اللاعب فارغ."
+        )
 
-            if callable(fn):
-                return fn(player)
+    whitelist = get_whitelist_object()
 
-    raise RuntimeError(
-        "إصدار مكتبة Aternos الحالي لا يوفر دالة إضافة Whitelist."
-    )
+    if hasattr(whitelist, "add"):
+        whitelist.add(player)
+
+    elif hasattr(whitelist, "append"):
+        whitelist.append(player)
+
+    else:
+        raise RuntimeError(
+            "إصدار python-aternos لا يدعم إضافة اللاعب "
+            "بالطريقة الحالية."
+        )
+
+    return {
+        "success": True,
+        "player": player
+    }
 
 
 def whitelist_remove(player):
-    wl = whitelist()
+    player = str(player).strip()
 
-    for method in (
-        "remove",
-        "remove_player",
-        "delete",
-    ):
-        if hasattr(wl, method):
-            fn = getattr(wl, method)
+    if not player:
+        raise ValueError(
+            "اسم اللاعب فارغ."
+        )
 
-            if callable(fn):
-                return fn(player)
+    whitelist = get_whitelist_object()
 
-    raise RuntimeError(
-        "إصدار مكتبة Aternos الحالي لا يوفر دالة حذف Whitelist."
-    )
+    if hasattr(whitelist, "remove"):
+        whitelist.remove(player)
 
+    elif hasattr(whitelist, "delete"):
+        whitelist.delete(player)
 
-def op_add(player):
-    ops = operators()
+    else:
+        raise RuntimeError(
+            "إصدار python-aternos لا يدعم إزالة اللاعب "
+            "بالطريقة الحالية."
+        )
 
-    for method in ("add", "add_player"):
-        if hasattr(ops, method):
-            fn = getattr(ops, method)
-
-            if callable(fn):
-                return fn(player)
-
-    raise RuntimeError(
-        "إصدار مكتبة Aternos الحالي لا يوفر دالة OP."
-    )
-
-
-def op_remove(player):
-    ops = operators()
-
-    for method in (
-        "remove",
-        "remove_player",
-        "delete",
-    ):
-        if hasattr(ops, method):
-            fn = getattr(ops, method)
-
-            if callable(fn):
-                return fn(player)
-
-    raise RuntimeError(
-        "إصدار مكتبة Aternos الحالي لا يوفر دالة DeOP."
-    )
+    return {
+        "success": True,
+        "player": player
+    }
