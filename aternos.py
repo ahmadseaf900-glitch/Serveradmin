@@ -294,4 +294,4 @@ def whitelist_remove(player):
     return {
         "success": True,
         "player": player
-    }
+                }
